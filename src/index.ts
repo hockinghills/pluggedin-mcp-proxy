@@ -28,8 +28,8 @@ program
 const options = program.opts();
 
 // Set environment variables from command line arguments
-if (options.pluggedinApiKey) {
-  process.env.PLUGGEDIN_API_KEY = options.pluggedinApiKey;
+if (options.PLUGGEDIN_API_KEY) {
+  process.env.PLUGGEDIN_API_KEY = options.PLUGGEDIN_API_KEY;
 }
 if (options.pluggedinApiBaseUrl) {
   process.env.PLUGGEDIN_API_BASE_URL = options.pluggedinApiBaseUrl;

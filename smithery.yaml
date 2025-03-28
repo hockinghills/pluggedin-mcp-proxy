@@ -1,22 +1,16 @@
-# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
-
 startCommand:
   type: stdio
   configSchema:
-    # JSON Schema defining the configuration options for the MCP.
     type: object
     required:
-      - pluggedinApiKey
+      - PLUGGEDIN_API_KEY
     properties:
-      pluggedinApiKey:
+      PLUGGEDIN_API_KEY:
         type: string
         description: The API key from plugged.in/api-keys. Required.
-      pluggedinApiBaseUrl:
-        type: string
-        description: Optional override for the PluggedinMCP App URL (default is https://plugged.in/api/).
   commandFunction:
     # A function that produces the CLI command to start the MCP on stdio.
     # Note: Command line arguments can also be used directly:
     # --pluggedin-api-key <your-api-key> --pluggedin-api-base-url <base-url>
     |-
-    (config) => ({ command: 'node', args: ['dist/index.js'], env: { PLUGGEDIN_API_KEY: config.pluggedinApiKey, ...(config.pluggedinApiBaseUrl && { PLUGGEDIN_API_BASE_URL: config.pluggedinApiBaseUrl }) } })
+    (config) => ({ command: 'node', args: ['dist/index.js'], env: { PLUGGEDIN_API_KEY: config.PLUGGEDIN_API_KEY } })
