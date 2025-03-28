@@ -1,8 +1,8 @@
-import { getMcpServers, ServerParameters } from "./fetch-metamcp.js";
+import { getMcpServers, ServerParameters } from "./fetch-pluggedinmcp.js";
 import {
   ConnectedClient,
-  createMetaMcpClient,
-  connectMetaMcpClient,
+  createPluggedinMCPClient,
+  connectPluggedinMCPClient,
 } from "./client.js";
 import { getSessionKey } from "./utils.js";
 
@@ -28,12 +28,12 @@ export const getSession = async (
       })
     );
 
-    const { client, transport } = createMetaMcpClient(params);
+    const { client, transport } = createPluggedinMCPClient(params);
     if (!client || !transport) {
       return;
     }
 
-    const newClient = await connectMetaMcpClient(client, transport);
+    const newClient = await connectPluggedinMCPClient(client, transport);
     if (!newClient) {
       return;
     }

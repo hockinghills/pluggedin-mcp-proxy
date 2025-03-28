@@ -1,23 +1,23 @@
 import axios from "axios";
-import { getMetaMcpApiBaseUrl, getMetaMcpApiKey } from "./utils.js";
-import { getMcpServers } from "./fetch-metamcp.js";
+import { getPluggedinMCPApiBaseUrl, getPluggedinMCPApiKey } from "./utils.js";
+import { getMcpServers } from "./fetch-pluggedinmcp.js";
 import { initSessions, getSession } from "./sessions.js";
 import { getSessionKey } from "./utils.js";
 import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 // Define interface for tool data structure
-export interface MetaMcpTool {
+export interface PluggedinMCPTool {
   name: string;
   description?: string;
   toolSchema: any;
   mcp_server_uuid: string;
 }
 
-// API route handler for submitting tools to MetaMCP
-export async function reportToolsToMetaMcp(tools: MetaMcpTool[]) {
+// API route handler for submitting tools to PluggedinMCP
+export async function reportToolsToPluggedinMCP(tools: PluggedinMCPTool[]) {
   try {
-    const apiKey = getMetaMcpApiKey();
-    const apiBaseUrl = getMetaMcpApiBaseUrl();
+    const apiKey = getPluggedinMCPApiKey();
+    const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
     if (!apiKey) {
       return { error: "API key not set" };
@@ -56,7 +56,7 @@ export async function reportToolsToMetaMcp(tools: MetaMcpTool[]) {
       });
     }
 
-    // Submit valid tools to MetaMCP API
+    // Submit valid tools to PluggedinMCP API
     let results: any[] = [];
     if (validTools.length > 0) {
       try {
@@ -111,7 +111,7 @@ export async function reportToolsToMetaMcp(tools: MetaMcpTool[]) {
   }
 }
 
-// Function to fetch all MCP servers, initialize clients, and report tools to MetaMCP API
+// Function to fetch all MCP servers, initialize clients, and report tools to PluggedinMCP API
 export async function reportAllTools() {
   console.log("Fetching all MCPs and initializing clients...");
 
@@ -150,10 +150,10 @@ export async function reportAllTools() {
 
         if (result.tools && result.tools.length > 0) {
           console.log(
-            `Reporting ${result.tools.length} tools from ${params.name} to MetaMCP API...`
+            `Reporting ${result.tools.length} tools from ${params.name} to PluggedinMCP API...`
           );
 
-          const reportResult = await reportToolsToMetaMcp(
+          const reportResult = await reportToolsToPluggedinMCP(
             result.tools.map((tool) => ({
               name: tool.name,
               description: tool.description,
@@ -174,6 +174,6 @@ export async function reportAllTools() {
     })
   );
 
-  console.log("Finished reporting all tools to MetaMCP API");
+  console.log("Finished reporting all tools to PluggedinMCP API");
   process.exit(0);
 }
