@@ -18,11 +18,11 @@ import {
   GetPromptResultSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { getMcpServers } from "./fetch-metamcp.js";
+import { getMcpServers } from "./fetch-pluggedinmcp.js";
 import { getSessionKey, sanitizeName } from "./utils.js";
 import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
 import { ConnectedClient } from "./client.js";
-import { reportToolsToMetaMcp } from "./report-tools.js";
+import { reportToolsToPluggedinMCP } from "./report-tools.js";
 import { getInactiveTools, ToolParameters } from "./fetch-tools.js";
 import {
   getProfileCapabilities,
@@ -37,7 +37,7 @@ const inactiveToolsMap: Record<string, boolean> = {};
 export const createServer = async () => {
   const server = new Server(
     {
-      name: "MetaMCP",
+      name: "PluggedinMCP",
       version: "0.4.0",
     },
     {
@@ -126,7 +126,7 @@ export const createServer = async () => {
             });
 
             // Report full tools for this server
-            reportToolsToMetaMcp(
+            reportToolsToPluggedinMCP(
               result.tools.map((tool) => ({
                 name: tool.name,
                 description: tool.description,

@@ -1,8 +1,8 @@
 import axios from "axios";
 import {
   getDefaultEnvironment,
-  getMetaMcpApiBaseUrl,
-  getMetaMcpApiKey,
+  getPluggedinMCPApiBaseUrl,
+  getPluggedinMCPApiKey,
 } from "./utils.js";
 
 // Define a new interface for server parameters that can be either STDIO or SSE
@@ -38,12 +38,12 @@ export async function getMcpServers(
   }
 
   try {
-    const apiKey = getMetaMcpApiKey();
-    const apiBaseUrl = getMetaMcpApiBaseUrl();
+    const apiKey = getPluggedinMCPApiKey();
+    const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
     if (!apiKey) {
       console.error(
-        "METAMCP_API_KEY is not set. Please set it via environment variable or command line argument."
+        "PLUGGEDIN_API_KEY is not set. Please set it via environment variable or command line argument."
       );
       return _mcpServersCache || {};
     }
