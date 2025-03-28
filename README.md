@@ -9,6 +9,17 @@ PluggedinMCP MCP Server is a proxy server that joins multiple MCP⁠ servers int
 
 PluggedinMCP App repo: https://github.com/VeriTeknik/pluggedin-app
 
+## Key Features
+
+- **MCP Playground**: Interactive environment to test and experiment with your MCP tools
+- **Multi-Server Support**: Connect both STDIO (command-line) and SSE (HTTP-based) MCP servers
+- **Custom MCP Servers**: Create and manage your own Python-based MCP servers
+- **Multi-Workspace Layer**: Switch between different sets of MCP configurations with one click
+- **Namespace Isolation**: Keep joined MCPs separate and organized
+- **LLM Integration**: Seamless integration with OpenAI and Anthropic models
+- **Real-time Updates**: GUI dynamic updates of MCP configurations
+- **Universal Compatibility**: Works with any MCP client
+
 ## Installation
 
 ### Installing via Smithery
@@ -41,13 +52,6 @@ npx -y @pluggedin/pluggedin-mcp-proxy@latest
   }
 }
 ```
-
-## Highlights
-
-- Compatible with ANY MCP Client
-- Multi-Workspaces layer enables you to switch to another set of MCP configs within one-click.
-- GUI dynamic updates of MCP configs.
-- Namespace isolation for joined MCPs.
 
 ## Environment Variables
 
