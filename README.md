@@ -19,6 +19,8 @@ PluggedinMCP App repo: https://github.com/VeriTeknik/pluggedin-app
 - **LLM Integration**: Seamless integration with OpenAI and Anthropic models
 - **Real-time Updates**: GUI dynamic updates of MCP configurations
 - **Universal Compatibility**: Works with any MCP client
+- **Smithery Compatibility**: Includes static `get_tools` and `tool_call` endpoints for improved compatibility with discovery platforms like Smithery.
+- **Dynamic Versioning**: Server version is read dynamically from `package.json`.
 
 ## Installation
 
@@ -83,20 +85,22 @@ sequenceDiagram
     participant PluggedinMCPApp as PluggedinMCP App
     participant MCPServers as Installed MCP Servers in Plugged.in App
 
-    MCPClient ->> PluggedinMCP-mcp-server: Request list tools
-    PluggedinMCP-mcp-server ->> PluggedinMCPApp: Get tools configuration & status
-    PluggedinMCPApp ->> PluggedinMCP-mcp-server: Return tools configuration & status
+    MCPClient ->> PluggedinMCP-mcp-server: Request list tools (tools/list)
+    PluggedinMCP-mcp-server ->> MCPClient: Return static tools (get_tools, tool_call)
 
-    loop For each listed MCP Server
+    MCPClient ->> PluggedinMCP-mcp-server: Call get_tools
+    PluggedinMCP-mcp-server ->> PluggedinMCPApp: Get active server configurations
+    PluggedinMCPApp ->> PluggedinMCP-mcp-server: Return server configurations
+    loop For each active MCP Server
         PluggedinMCP-mcp-server ->> MCPServers: Request list_tools
         MCPServers ->> PluggedinMCP-mcp-server: Return list of tools
     end
+    PluggedinMCP-mcp-server ->> PluggedinMCP-mcp-server: Aggregate proxied tool lists
+    PluggedinMCP-mcp-server ->> MCPClient: Return aggregated list of proxied tools
 
-    PluggedinMCP-mcp-server ->> PluggedinMCP-mcp-server: Aggregate tool lists
-    PluggedinMCP-mcp-server ->> MCPClient: Return aggregated list of tools
-
-    MCPClient ->> PluggedinMCP-mcp-server: Call tool
-    PluggedinMCP-mcp-server ->> MCPServers: call_tool to target MCP Server
+    MCPClient ->> PluggedinMCP-mcp-server: Call tool_call (with prefixed tool name)
+    PluggedinMCP-mcp-server ->> PluggedinMCP-mcp-server: Find target downstream server
+    PluggedinMCP-mcp-server ->> MCPServers: call_tool (with original tool name)
     MCPServers ->> PluggedinMCP-mcp-server: Return tool response
     PluggedinMCP-mcp-server ->> MCPClient: Return tool response
 ```

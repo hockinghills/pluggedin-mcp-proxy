@@ -18,15 +18,18 @@ RUN uv --version
 
 # Verify npx is available
 RUN npx --version || npm install -g npx
+# Install pnpm
+RUN npm install -g pnpm
 
 # Set the working directory
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+# Copy package files AND pnpm lock file
+COPY package*.json pnpm-lock.yaml ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies using pnpm
+RUN pnpm install --frozen-lockfile
 
 # Copy the rest of the application
 COPY . .
@@ -41,4 +44,4 @@ ENV NODE_ENV=production
 EXPOSE 3000
 
 # Run the application
-ENTRYPOINT ["node", "dist/index.js"] 
+ENTRYPOINT ["node", "dist/index.js"]
