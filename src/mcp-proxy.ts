@@ -23,22 +23,25 @@ import { getSessionKey, sanitizeName } from "./utils.js";
 import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
 import { ConnectedClient } from "./client.js";
 import { reportToolsToPluggedinMCP } from "./report-tools.js";
-import { getInactiveTools, ToolParameters } from "./fetch-tools.js";
+import { getInactiveTools, ToolParameters } from "./fetch-tools.js"; // Keep for potential internal use if needed
 import {
   getProfileCapabilities,
   ProfileCapability,
-} from "./fetch-capabilities.js";
+} from "./fetch-capabilities.js"; // Keep for potential internal use if needed
+import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js";
+import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js";
 
-const toolToClient: Record<string, ConnectedClient> = {};
-const promptToClient: Record<string, ConnectedClient> = {};
-const resourceToClient: Record<string, ConnectedClient> = {};
-const inactiveToolsMap: Record<string, boolean> = {};
+// Remove global mappings as they are handled within the tool executions now
+// const toolToClient: Record<string, ConnectedClient> = {};
+const promptToClient: Record<string, ConnectedClient> = {}; // Keep if prompt proxying is still direct
+const resourceToClient: Record<string, ConnectedClient> = {}; // Keep if resource proxying is still direct
+// const inactiveToolsMap: Record<string, boolean> = {}; // Inactive check is now inside CallPluggedinToolTool
 
 export const createServer = async () => {
   const server = new Server(
     {
       name: "PluggedinMCP",
-      version: "0.4.0",
+      version: "0.4.2", // Updated version to match package.json
     },
     {
       capabilities: {
@@ -52,148 +55,93 @@ export const createServer = async () => {
   // Initialize sessions in the background when server starts
   initSessions().catch();
 
-  // List Tools Handler
+  // --- Static Tool Registration ---
+  // Instead of dynamically fetching, we now statically declare the tools this proxy offers.
+
+  // List Tools Handler - Now returns only the static tools
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
-    const profileCapabilities = await getProfileCapabilities(true);
-    const serverParams = await getMcpServers(true);
-
-    // Fetch inactive tools only if tools management capability is present
-    let inactiveTools: Record<string, ToolParameters> = {};
-    if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
-      inactiveTools = await getInactiveTools(true);
-      // Clear existing inactive tools map before rebuilding
-      Object.keys(inactiveToolsMap).forEach(
-        (key) => delete inactiveToolsMap[key]
-      );
-    }
-
-    const allTools: Tool[] = [];
-
-    await Promise.allSettled(
-      Object.entries(serverParams).map(async ([uuid, params]) => {
-        const sessionKey = getSessionKey(uuid, params);
-        const session = await getSession(sessionKey, uuid, params);
-        if (!session) return;
-
-        const capabilities = session.client.getServerCapabilities();
-        if (!capabilities?.tools) return;
-
-        const serverName = session.client.getServerVersion()?.name || "";
-        try {
-          const result = await session.client.request(
-            {
-              method: "tools/list",
-              params: { _meta: request.params?._meta },
+    console.log("ListToolsRequest received, returning static tools.");
+    const staticTools: Tool[] = [
+      {
+        name: GetPluggedinToolsTool.toolName,
+        description: GetPluggedinToolsTool.description,
+        // Provide the JSON schema directly
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: CallPluggedinToolTool.toolName,
+        description: CallPluggedinToolTool.description,
+        // Provide the JSON schema directly
+        inputSchema: {
+          type: "object",
+          properties: {
+            tool_name: {
+              type: "string",
+              description:
+                "The prefixed name of the proxied tool to call (e.g., 'github__create_issue', 'google_calendar__list_events'). Get this from 'get_pluggedin_tools'.",
             },
-            ListToolsResultSchema
-          );
-
-          const toolsWithSource =
-            result.tools
-              ?.filter((tool) => {
-                // Only filter inactive tools if tools management is enabled
-                if (
-                  profileCapabilities.includes(
-                    ProfileCapability.TOOLS_MANAGEMENT
-                  )
-                ) {
-                  return !inactiveTools[`${uuid}:${tool.name}`];
-                }
-                return true;
-              })
-              .map((tool) => {
-                const toolName = `${sanitizeName(serverName)}__${tool.name}`;
-                toolToClient[toolName] = session;
-                return {
-                  ...tool,
-                  name: toolName,
-                  description: `[${serverName}] ${tool.description || ""}`,
-                };
-              }) || [];
-
-          // Update our inactive tools map only if tools management is enabled
-          if (
-            profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)
-          ) {
-            result.tools?.forEach((tool) => {
-              const isInactive = inactiveTools[`${uuid}:${tool.name}`];
-              if (isInactive) {
-                const formattedName = `${sanitizeName(serverName)}__${
-                  tool.name
-                }`;
-                inactiveToolsMap[formattedName] = true;
-              }
-            });
-
-            // Report full tools for this server
-            reportToolsToPluggedinMCP(
-              result.tools.map((tool) => ({
-                name: tool.name,
-                description: tool.description,
-                toolSchema: tool.inputSchema,
-                mcp_server_uuid: uuid,
-              }))
-            ).catch();
-          }
-
-          allTools.push(...toolsWithSource);
-        } catch (error) {
-          console.error(`Error fetching tools from: ${serverName}`, error);
-        }
-      })
-    );
-
-    return { tools: allTools };
-  });
-
-  // Call Tool Handler
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-
-    const clientForTool = toolToClient[name];
-
-    if (!clientForTool) {
-      throw new Error(`Unknown tool: ${name}`);
-    }
-
-    // Only check inactive tools if tools management capability is present
-    const profileCapabilities = await getProfileCapabilities();
-    if (
-      profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT) &&
-      inactiveToolsMap[name]
-    ) {
-      throw new Error(`Tool is inactive: ${name}`);
-    }
-
-    try {
-      const toolName = name.split("__")[1];
-
-      // Use the correct schema for tool calls
-      return await clientForTool.client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: toolName,
-            arguments: args || {},
-            _meta: {
-              progressToken: request.params._meta?.progressToken,
+            arguments: {
+              type: "object",
+              additionalProperties: true,
+              description:
+                "The arguments object required by the specific proxied tool being called.",
             },
           },
+          required: ["tool_name"],
         },
-        CompatibilityCallToolResultSchema
-      );
-    } catch (error) {
-      console.error(
-        `Error calling tool through ${
-          clientForTool.client.getServerVersion()?.name
-        }:`,
-        error
-      );
-      throw error;
+      },
+    ];
+    return { tools: staticTools };
+  });
+
+  // Call Tool Handler - Now routes calls to the static tool classes
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    const meta = request.params._meta; // Extract meta for passing along
+
+    console.log(`CallToolRequest received for tool: ${name}`);
+
+    try {
+      if (name === GetPluggedinToolsTool.toolName) {
+        // Execute the static 'get_pluggedin_tools' tool
+        // Note: The execute method in GetPluggedinToolsTool returns a ListToolsResult,
+        // but the CallTool handler expects a CallToolResult. This needs adjustment.
+        // For now, let's assume GetPluggedinToolsTool.execute is adapted or we wrap its result.
+        // --- TEMPORARY ADJUSTMENT: Wrap result ---
+        const listResult = await GetPluggedinToolsTool.execute(meta);
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(listResult.tools, null, 2) },
+          ],
+        };
+        // --- END TEMPORARY ADJUSTMENT ---
+        // TODO: Refactor GetPluggedinToolsTool.execute to return CallToolResult format or handle conversion here.
+
+      } else if (name === CallPluggedinToolTool.toolName) {
+        // Validate arguments against the CallPluggedinToolTool schema
+        const validatedArgs = CallPluggedinToolTool.inputSchema.parse(args);
+        // Execute the static 'call_pluggedin_tool' tool
+        return await CallPluggedinToolTool.execute(validatedArgs, meta);
+      } else {
+        // If the tool name doesn't match our static tools, it's an invalid request
+        console.error(`Unknown static tool requested: ${name}`);
+        throw new Error(
+          `Unknown tool: ${name}. Use 'get_pluggedin_tools' to list available tools and 'call_pluggedin_tool' to execute them.`
+        );
+      }
+    } catch (error: any) {
+      console.error(`Error executing static tool ${name}:`, error);
+      // Return error in the expected format
+      return {
+        isError: true,
+        content: [{ type: "text", text: error.message || "An unknown error occurred" }],
+      };
     }
   });
 
-  // Get Prompt Handler
+  // --- Prompt and Resource Handlers (Keep existing proxy logic if needed) ---
+
+  // Get Prompt Handler (Assuming direct proxying is still desired)
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     const { name } = request.params;
     const clientForPrompt = promptToClient[name];
@@ -203,6 +151,7 @@ export const createServer = async () => {
     }
 
     try {
+      // Ensure promptToClient mapping is maintained if this handler is kept
       const promptName = name.split("__")[1];
       const response = await clientForPrompt.client.request(
         {
@@ -258,7 +207,7 @@ export const createServer = async () => {
           if (result.prompts) {
             const promptsWithSource = result.prompts.map((prompt) => {
               const promptName = `${sanitizeName(serverName)}__${prompt.name}`;
-              promptToClient[promptName] = session;
+              promptToClient[promptName] = session; // Ensure this mapping is updated
               return {
                 ...prompt,
                 name: promptName,
@@ -309,7 +258,7 @@ export const createServer = async () => {
 
           if (result.resources) {
             const resourcesWithSource = result.resources.map((resource) => {
-              resourceToClient[resource.uri] = session;
+              resourceToClient[resource.uri] = session; // Ensure this mapping is updated
               return {
                 ...resource,
                 name: `[${serverName}] ${resource.name || ""}`,
@@ -332,7 +281,7 @@ export const createServer = async () => {
   // Read Resource Handler
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
-    const clientForResource = resourceToClient[uri];
+    const clientForResource = resourceToClient[uri]; // Ensure this mapping is updated
 
     if (!clientForResource) {
       throw new Error(`Unknown resource: ${uri}`);
