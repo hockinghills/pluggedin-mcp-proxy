@@ -6,7 +6,7 @@ import {
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getMcpServers } from "../fetch-pluggedinmcp.js";
-import { getSessionKey, sanitizeName } from "../utils.js";
+import { getSessionKey, sanitizeName, getPluggedinMCPApiKey } from "../utils.js"; // Import getPluggedinMCPApiKey
 import { getSession } from "../sessions.js";
 import { ConnectedClient } from "../client.js"; // Assuming ConnectedClient holds the session/client
 import {
@@ -15,10 +15,10 @@ import {
 } from "../fetch-capabilities.js";
 import { getInactiveTools, ToolParameters } from "../fetch-tools.js";
 
-const toolName = "call_pluggedin_tool";
+const toolName = "tool_call"; // Renamed to match veyrax-mcp convention
 const toolDescription = `
 Executes a specific proxied MCP tool managed by PluggedinMCP.
-Use 'get_pluggedin_tools' first to find the correct 'tool_name' (e.g., 'github__create_issue').
+Use 'get_tools' first to find the correct 'tool_name' (e.g., 'github__create_issue').
 Requires a valid PluggedinMCP API key configured in the environment. The API key is used implicitly by the server based on its environment configuration.
 `;
 
@@ -27,9 +27,9 @@ const CallPluggedinToolSchema = z.object({
   tool_name: z
     .string()
     .describe(
-      "The prefixed name of the proxied tool to call (e.g., 'github__create_issue', 'google_calendar__list_events'). Get this from 'get_pluggedin_tools'."
+      "The prefixed name of the proxied tool to call (e.g., 'github__create_issue', 'google_calendar__list_events'). Get this from 'get_tools'."
     ),
-  arguments: z
+  arguments: z // Renamed input parameter to match veyrax-mcp
     .record(z.any())
     .optional()
     .default({})
@@ -50,7 +50,15 @@ export class CallPluggedinToolTool {
     prefixedToolName: string,
     requestMeta: any
   ): Promise<ConnectedClient | null> {
-    const serverParams = await getMcpServers(true); // Force refresh might be needed depending on caching strategy
+    // Check for API key before trying to fetch servers
+    const apiKey = getPluggedinMCPApiKey();
+    if (!apiKey) {
+      console.error("PLUGGEDIN_API_KEY is missing. Cannot find client for tool.");
+      // Return null, the execute method will handle the error response
+      return null;
+    }
+
+    const serverParams = await getMcpServers(true); // Force refresh now that we know key exists
     const profileCapabilities = await getProfileCapabilities(true);
     let inactiveTools: Record<string, ToolParameters> = {};
     if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
@@ -110,7 +118,16 @@ export class CallPluggedinToolTool {
     );
 
     if (!clientForTool) {
-      // Consider checking the inactive map explicitly here as well for a clearer error
+      // Check if the reason was a missing API key (findClientForTool returns null in that case)
+      const apiKey = getPluggedinMCPApiKey();
+      if (!apiKey) {
+         return {
+           isError: true,
+           content: [{ type: "text", text: "Configuration Error: PluggedinMCP API Key is missing. Please configure the server." }],
+         };
+      }
+
+      // Otherwise, the tool was genuinely not found or inactive
       const profileCapabilities = await getProfileCapabilities();
       if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
         // Re-fetch inactive tools to give a specific error if possible

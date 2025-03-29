@@ -6,6 +6,10 @@ import {
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ServerParameters } from "./fetch-pluggedinmcp.js";
+import { createRequire } from 'module'; // Import createRequire for JSON
+
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json'); // Read package.json relative to current file
 
 const sleep = (time: number) =>
   new Promise<void>((resolve) => setTimeout(() => resolve(), time));
@@ -40,7 +44,7 @@ export const createPluggedinMCPClient = (
   const client = new Client(
     {
       name: "PluggedinMCP",
-      version: "0.4.1",
+      version: packageJson.version, // Use version from package.json
     },
     {
       capabilities: {

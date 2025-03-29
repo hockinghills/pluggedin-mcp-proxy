@@ -28,8 +28,13 @@ import {
   getProfileCapabilities,
   ProfileCapability,
 } from "./fetch-capabilities.js"; // Keep for potential internal use if needed
-import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js";
-import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js";
+import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js"; // Will now be GetToolsTool internally
+import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js"; // Will now be ToolCallTool internally
+import { readFileSync } from 'fs'; // Import fs
+import { createRequire } from 'module'; // Import createRequire for JSON
+
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json'); // Read package.json relative to current file
 
 // Remove global mappings as they are handled within the tool executions now
 // const toolToClient: Record<string, ConnectedClient> = {};
@@ -41,7 +46,7 @@ export const createServer = async () => {
   const server = new Server(
     {
       name: "PluggedinMCP",
-      version: "0.4.2", // Updated version to match package.json
+      version: packageJson.version, // Use version from package.json
     },
     {
       capabilities: {
@@ -52,8 +57,8 @@ export const createServer = async () => {
     }
   );
 
-  // Initialize sessions in the background when server starts
-  initSessions().catch();
+  // Remove background session initialization - sessions will be initialized on demand by getSession
+  // initSessions().catch();
 
   // --- Static Tool Registration ---
   // Instead of dynamically fetching, we now statically declare the tools this proxy offers.
@@ -63,24 +68,24 @@ export const createServer = async () => {
     console.log("ListToolsRequest received, returning static tools.");
     const staticTools: Tool[] = [
       {
-        name: GetPluggedinToolsTool.toolName,
+        name: GetPluggedinToolsTool.toolName, // Uses 'get_tools' now
         description: GetPluggedinToolsTool.description,
         // Provide the JSON schema directly
         inputSchema: { type: "object", properties: {} },
       },
       {
-        name: CallPluggedinToolTool.toolName,
+        name: CallPluggedinToolTool.toolName, // Uses 'tool_call' now
         description: CallPluggedinToolTool.description,
         // Provide the JSON schema directly
         inputSchema: {
           type: "object",
           properties: {
-            tool_name: {
+            tool_name: { // Keep internal schema name consistent for now
               type: "string",
               description:
-                "The prefixed name of the proxied tool to call (e.g., 'github__create_issue', 'google_calendar__list_events'). Get this from 'get_pluggedin_tools'.",
+                "The prefixed name of the proxied tool to call (e.g., 'github__create_issue', 'google_calendar__list_events'). Get this from 'get_tools'.", // Updated description
             },
-            arguments: {
+            arguments: { // Keep internal schema name consistent for now
               type: "object",
               additionalProperties: true,
               description:
@@ -102,8 +107,8 @@ export const createServer = async () => {
     console.log(`CallToolRequest received for tool: ${name}`);
 
     try {
-      if (name === GetPluggedinToolsTool.toolName) {
-        // Execute the static 'get_pluggedin_tools' tool
+      if (name === GetPluggedinToolsTool.toolName) { // Check against 'get_tools'
+        // Execute the static 'get_tools' tool
         // Note: The execute method in GetPluggedinToolsTool returns a ListToolsResult,
         // but the CallTool handler expects a CallToolResult. This needs adjustment.
         // For now, let's assume GetPluggedinToolsTool.execute is adapted or we wrap its result.
@@ -117,16 +122,16 @@ export const createServer = async () => {
         // --- END TEMPORARY ADJUSTMENT ---
         // TODO: Refactor GetPluggedinToolsTool.execute to return CallToolResult format or handle conversion here.
 
-      } else if (name === CallPluggedinToolTool.toolName) {
+      } else if (name === CallPluggedinToolTool.toolName) { // Check against 'tool_call'
         // Validate arguments against the CallPluggedinToolTool schema
         const validatedArgs = CallPluggedinToolTool.inputSchema.parse(args);
-        // Execute the static 'call_pluggedin_tool' tool
+        // Execute the static 'tool_call' tool
         return await CallPluggedinToolTool.execute(validatedArgs, meta);
       } else {
         // If the tool name doesn't match our static tools, it's an invalid request
         console.error(`Unknown static tool requested: ${name}`);
         throw new Error(
-          `Unknown tool: ${name}. Use 'get_pluggedin_tools' to list available tools and 'call_pluggedin_tool' to execute them.`
+          `Unknown tool: ${name}. Use 'get_tools' to list available tools and 'tool_call' to execute them.` // Updated error message
         );
       }
     } catch (error: any) {
