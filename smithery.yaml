@@ -7,7 +7,7 @@ startCommand:
     properties:
       PLUGGEDIN_API_KEY:
         type: string
-        description: The API key from plugged.in/api-keys. Required.
+        description: Your Plugged.in API key (see plugged.in/api-keys). Required. # Slightly changed description
   commandFunction:
     # A function that produces the CLI command to start the MCP on stdio.
     # Note: Command line arguments can also be used directly:
