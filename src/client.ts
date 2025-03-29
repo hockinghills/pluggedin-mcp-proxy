@@ -40,7 +40,7 @@ export const createPluggedinMCPClient = (
   const client = new Client(
     {
       name: "PluggedinMCP",
-      version: "0.4.0",
+      version: "0.4.1",
     },
     {
       capabilities: {

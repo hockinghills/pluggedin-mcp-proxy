@@ -131,3 +131,4 @@ dist
 
 dist/**/*
 /memory-bank
+.DS_Store
