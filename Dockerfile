@@ -1,24 +1,8 @@
-# Use the official uv Debian image as base
-FROM ghcr.io/astral-sh/uv:debian
+# Use a standard Node.js 20 slim image (Debian-based)
+FROM node:20-slim
 
-# Install Node.js and npm
-RUN apt-get update && apt-get install -y \
-    curl \
-    gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Verify Node.js and npm installation
-RUN node --version && npm --version
-
-# Verify uv is installed correctly
-RUN uv --version
-
-# Verify npx is available
-RUN npx --version || npm install -g npx
-# Install pnpm
+# Node.js and npm are pre-installed in this image.
+# Install pnpm globally
 RUN npm install -g pnpm
 
 # Set the working directory
