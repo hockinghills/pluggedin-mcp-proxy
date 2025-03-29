@@ -13,4 +13,4 @@ startCommand:
     # Note: Command line arguments can also be used directly:
     # --pluggedin-api-key <your-api-key> --pluggedin-api-base-url <base-url>
     |-
-    (config) => ({ command: 'node', args: ['dist/index.js', '--pluggedin-api-key', config.PLUGGEDIN_API_KEY] }) # Pass key as CLI arg
+    (config) => ({ command: 'node', args: ['dist/index.js'], env: { PLUGGEDIN_API_KEY: config.PLUGGEDIN_API_KEY } }) # Pass key via env (matching veyrax)
