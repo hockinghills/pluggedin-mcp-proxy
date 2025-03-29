@@ -3,9 +3,10 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   Tool,
   ListToolsResultSchema,
+  CompatibilityCallToolResultSchema, // Import the correct result type
 } from "@modelcontextprotocol/sdk/types.js";
 import { getMcpServers } from "../fetch-pluggedinmcp.js";
-import { getSessionKey, sanitizeName } from "../utils.js";
+import { getSessionKey, sanitizeName, getPluggedinMCPApiKey } from "../utils.js"; // Import getPluggedinMCPApiKey
 import { getSession } from "../sessions.js";
 import { reportToolsToPluggedinMCP } from "../report-tools.js";
 import { getInactiveTools, ToolParameters } from "../fetch-tools.js";
@@ -17,10 +18,10 @@ import {
 // Define a base tool class or interface if needed, or directly implement
 // For simplicity, we'll define the structure here directly
 
-const toolName = "get_pluggedin_tools";
+const toolName = "get_tools"; // Renamed to match veyrax-mcp convention
 const toolDescription = `
 Retrieves the list of currently active and available proxied MCP tools managed by PluggedinMCP.
-Use this tool first to discover which tools (like 'github__create_issue', 'google_calendar__list_events', etc.) are available before attempting to call them with 'call_pluggedin_tool'.
+Use this tool first to discover which tools (like 'github__create_issue', 'google_calendar__list_events', etc.) are available before attempting to call them with 'tool_call'.
 Requires a valid PluggedinMCP API key configured in the environment.
 `;
 
@@ -38,7 +39,8 @@ export class GetPluggedinToolsTool {
   static async execute(
     // args: z.infer<typeof GetPluggedinToolsSchema>, // Use if input schema has properties
     requestMeta: any // Contains metadata like progress tokens
-  ): Promise<z.infer<typeof ListToolsResultSchema>> {
+   // Change return type to CallToolResult format
+  ): Promise<z.infer<typeof CompatibilityCallToolResultSchema>> {
     // This logic is adapted from the original ListToolsRequestSchema handler
     // It fetches servers, gets sessions, lists tools from each, filters inactive, prefixes names, etc.
     // Note: This execution logic *itself* doesn't return the static tool list,
@@ -50,8 +52,25 @@ export class GetPluggedinToolsTool {
     // A simple global map might work for a single-user server, but consider concurrency.
     const toolToClientMapping: Record<string, any> = {}; // Temporary store for client mapping
 
+    // Check if API key is available before proceeding
+    const apiKey = getPluggedinMCPApiKey(); // Assuming this util exists and checks env/args
+    if (!apiKey) {
+      console.error("PLUGGEDIN_API_KEY is missing. Cannot fetch tools.");
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Configuration Error: PluggedinMCP API Key is missing. Please configure the server." }],
+      };
+    }
+
     const profileCapabilities = await getProfileCapabilities(true);
-    const serverParams = await getMcpServers(true);
+    const serverParams = await getMcpServers(true); // Force refresh now that we know key exists (or try to)
+
+    // Handle case where getMcpServers might still fail or return empty due to backend issues
+    if (Object.keys(serverParams).length === 0) {
+       console.warn("No downstream MCP servers found or fetched.");
+       // Return empty list in CallToolResult format
+       return { content: [{ type: "text", text: "[]" }] };
+    }
 
     let inactiveTools: Record<string, ToolParameters> = {};
     if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
@@ -136,10 +155,15 @@ export class GetPluggedinToolsTool {
     // Option 1: Return it somehow (not standard MCP)
     // Option 2: Store it globally/contextually (needs careful implementation)
     // Option 3: Re-fetch/re-map during the 'call_pluggedin_tool' execution (potentially slower)
-    // For now, we just return the tools. The mapping needs to be addressed in the call tool.
+    // For now, we just return the tools. The mapping needs to be addressed in the tool_call tool.
     console.log(`Discovered ${allProxiedTools.length} active proxied tools.`);
 
-    return { tools: allProxiedTools };
+    // Return the list of tools formatted as CallToolResult content
+    return {
+      content: [
+        { type: "text", text: JSON.stringify(allProxiedTools, null, 2) },
+      ],
+    };
   }
 
   // Registration will be handled in the main server setup (mcp-proxy.ts)
