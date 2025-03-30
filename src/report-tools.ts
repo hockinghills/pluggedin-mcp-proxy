@@ -11,6 +11,7 @@ export interface PluggedinMCPTool {
   description?: string;
   toolSchema: any;
   mcp_server_uuid: string;
+  status?: string; // Add status field
 }
 
 // API route handler for submitting tools to PluggedinMCP
@@ -159,6 +160,7 @@ export async function reportAllTools() {
               description: tool.description,
               toolSchema: tool.inputSchema,
               mcp_server_uuid: uuid,
+              status: "ACTIVE", // Explicitly set status to ACTIVE
             }))
           );
 
@@ -175,5 +177,5 @@ export async function reportAllTools() {
   );
 
   console.log("Finished reporting all tools to PluggedinMCP API");
-  process.exit(0);
+  // process.exit(0); // Remove exit call when used as a module/script
 }
