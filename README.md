@@ -21,6 +21,7 @@ PluggedinMCP App repo: https://github.com/VeriTeknik/pluggedin-app
 - **Universal Compatibility**: Works with any MCP client
 - **Smithery Compatibility**: Includes static `get_tools` and `tool_call` endpoints for improved compatibility with discovery platforms like Smithery.
 - **Dynamic Versioning**: Server version is read dynamically from `package.json`.
+- **Backend Interaction**: Reports discovered tools to the `pluggedin-app` backend and fetches inactive tool status (if the `TOOLS_MANAGEMENT` capability is enabled for the user's profile in `pluggedin-app`).
 
 ## Installation
 
@@ -89,14 +90,22 @@ sequenceDiagram
     PluggedinMCP-mcp-server ->> MCPClient: Return static tools (get_tools, tool_call)
 
     MCPClient ->> PluggedinMCP-mcp-server: Call get_tools
-    PluggedinMCP-mcp-server ->> PluggedinMCPApp: Get active server configurations
-    PluggedinMCPApp ->> PluggedinMCP-mcp-server: Return server configurations
+    PluggedinMCP-mcp-server ->> PluggedinMCPApp: Get active server configurations & profile capabilities
+    PluggedinMCPApp ->> PluggedinMCP-mcp-server: Return server configurations & capabilities
+    opt If TOOLS_MANAGEMENT capability enabled
+        PluggedinMCP-mcp-server ->> PluggedinMCPApp: Get inactive tool list (GET /api/tools?status=INACTIVE)
+        PluggedinMCPApp ->> PluggedinMCP-mcp-server: Return inactive tool list
+    end
     loop For each active MCP Server
         PluggedinMCP-mcp-server ->> MCPServers: Request list_tools
         MCPServers ->> PluggedinMCP-mcp-server: Return list of tools
+        opt If TOOLS_MANAGEMENT capability enabled
+             PluggedinMCP-mcp-server ->> PluggedinMCPApp: Report discovered tools (POST /api/tools)
+             PluggedinMCPApp ->> PluggedinMCP-mcp-server: Report confirmation
+        end
     end
-    PluggedinMCP-mcp-server ->> PluggedinMCP-mcp-server: Aggregate proxied tool lists
-    PluggedinMCP-mcp-server ->> MCPClient: Return aggregated list of proxied tools
+    PluggedinMCP-mcp-server ->> PluggedinMCP-mcp-server: Aggregate & Filter proxied tool lists
+    PluggedinMCP-mcp-server ->> MCPClient: Return aggregated list of active proxied tools
 
     MCPClient ->> PluggedinMCP-mcp-server: Call tool_call (with prefixed tool name)
     PluggedinMCP-mcp-server ->> PluggedinMCP-mcp-server: Find target downstream server

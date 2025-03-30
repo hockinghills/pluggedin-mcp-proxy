@@ -1,5 +1,5 @@
 {
-  "name": "@VeriTeknik/pluggedin-mcp-proxy",
+  "name": "@veriteknik/pluggedin-mcp-proxy",
   "version": "0.4.8",
   "description": "MCP Server PluggedinMCP manages all your other MCPs in one MCP.",
   "scripts": {
