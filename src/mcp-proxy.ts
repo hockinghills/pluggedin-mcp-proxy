@@ -19,7 +19,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod"; // Keep for validation if re-enabled
 import { getMcpServers } from "./fetch-pluggedinmcp.js";
-import { getSessionKey, sanitizeName } from "./utils.js";
+import { getSessionKey, sanitizeName, isDebugEnabled } from "./utils.js"; // Import isDebugEnabled
 import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
 import { ConnectedClient } from "./client.js";
 import { reportToolsToPluggedinMCP } from "./report-tools.js";
@@ -39,6 +39,21 @@ const packageJson = require('../package.json');
 const promptToClient: Record<string, ConnectedClient> = {};
 const resourceToClient: Record<string, ConnectedClient> = {};
 
+// Helper function for conditional debug logging to stderr
+const debugLog = (...args: any[]) => {
+  // No-op: All logging removed to prevent stdio interference
+  // if (isDebugEnabled()) {
+  //   process.stderr.write(`[DEBUG] ${args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ')}\n`);
+  // }
+};
+
+// Helper function for error logging to stderr
+const errorLog = (...args: any[]) => {
+   // No-op: All logging removed to prevent stdio interference
+   // process.stderr.write(`[ERROR] ${args.map(arg => arg instanceof Error ? arg.stack : String(arg)).join(' ')}\n`);
+};
+
+
 export const createServer = async () => {
   const server = new Server(
     {
@@ -56,7 +71,6 @@ export const createServer = async () => {
 
   // List Tools Handler
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
-    // console.log("ListToolsRequest received, returning static tools."); // Removed log
     const staticTools: Tool[] = [
       {
         name: GetPluggedinToolsTool.toolName,
@@ -66,7 +80,6 @@ export const createServer = async () => {
       {
         name: CallPluggedinToolTool.toolName,
         description: CallPluggedinToolTool.description,
-        // More accurately represent the Zod schema used for parsing
         inputSchema: {
           type: "object",
           properties: {
@@ -76,18 +89,16 @@ export const createServer = async () => {
             },
             arguments: { 
               type: "object", 
-              additionalProperties: true, // from z.record(z.any())
+              additionalProperties: true, 
               description: "The arguments object required by the specific proxied tool being called.",
-              default: {} // from .optional().default({})
+              default: {} 
             }
           },
-          required: ["tool_name"] // Only tool_name is strictly required by the Zod schema
+          required: ["tool_name"] 
         },
       },
     ];
     const responsePayload = { tools: staticTools };
-    // Return the object directly, SDK handles serialization
-    // Validation was removed as a debugging step for the client-side parsing error
     return responsePayload;
   });
 
@@ -95,40 +106,32 @@ export const createServer = async () => {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const meta = request.params._meta;
-    // console.log(`CallToolRequest received for tool: ${name}`); // Removed log
     try {
       if (name === GetPluggedinToolsTool.toolName) {
-        // Execute the tool which now returns a stringified array of tool names
         const toolListString = await GetPluggedinToolsTool.execute(meta); 
-        
-        // Return a simple CallToolResult containing only the text
         return {
           content: [
-            { type: "text", text: toolListString }, // Place the string directly here
+            { type: "text", text: toolListString }, 
           ],
         };
       } else if (name === CallPluggedinToolTool.toolName) {
-        // Re-enable Zod parsing using the tool's actual schema
         const validatedArgs = CallPluggedinToolTool.inputSchema.parse(args); 
-        // Let the SDK handle the response serialization for this case
         return await CallPluggedinToolTool.execute(validatedArgs, meta); 
       } else {
-        console.error(`Unknown static tool requested: ${name}`);
+        // errorLog(`Unknown static tool requested: ${name}`); // Removed log
         throw new Error(
           `Unknown tool: ${name}. Use 'get_tools' to list available tools and 'tool_call' to execute them.`
         );
       }
-    } catch (error) { // Catch all errors more broadly
+    } catch (error) { 
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`Error executing static tool ${name}:`, errorMessage, error); // Log the error message and potentially the full error object
+      // errorLog(`Error executing static tool ${name}:`, errorMessage, error); // Removed log
 
-      // Always return a standardized error format (as an object for SDK serialization)
       let errorDetail = errorMessage;
       if (error instanceof z.ZodError) {
         errorDetail = `Invalid arguments for tool_call: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
       }
       
-      // Let SDK serialize the error object
       return {
         isError: true,
         content: [{ type: "text", text: errorDetail || "An unknown error occurred during tool execution" }],
@@ -148,58 +151,96 @@ export const createServer = async () => {
         GetPromptResultSchema
       );
     } catch (error) {
-      console.error(`Error getting prompt through ${clientForPrompt.client.getServerVersion()?.name}:`, error);
-      throw error;
+      // errorLog(`Error getting prompt through ${clientForPrompt.client.getServerVersion()?.name}:`, error); // Removed log
+      throw error; // Re-throw for SDK to handle
     }
   });
 
   // List Prompts Handler
   server.setRequestHandler(ListPromptsRequestSchema, async (request) => {
-    const serverParams = await getMcpServers(true);
-    const allPrompts: z.infer<typeof ListPromptsResultSchema>["prompts"] = [];
-    await Promise.allSettled(
-      Object.entries(serverParams).map(async ([uuid, params]) => {
-        const sessionKey = getSessionKey(uuid, params);
-        const session = await getSession(sessionKey, uuid, params);
-        if (!session || !session.client.getServerCapabilities()?.prompts) return;
-        const serverName = session.client.getServerVersion()?.name || "";
-        try {
-          const result = await session.client.request({ method: "prompts/list", params: { cursor: request.params?.cursor, _meta: request.params?._meta } }, ListPromptsResultSchema);
-          if (result.prompts) {
-            result.prompts.forEach(prompt => {
-              const promptName = `${sanitizeName(serverName)}__${prompt.name}`;
-              promptToClient[promptName] = session;
-              allPrompts.push({ ...prompt, name: promptName, description: `[${serverName}] ${prompt.description || ""}` });
-            });
+    try { 
+      const serverParams = await getMcpServers(true);
+      const allPrompts: z.infer<typeof ListPromptsResultSchema>["prompts"] = [];
+      await Promise.allSettled(
+        Object.entries(serverParams).map(async ([uuid, params]) => {
+          try { 
+            const sessionKey = getSessionKey(uuid, params);
+            const session = await getSession(sessionKey, uuid, params);
+            if (!session || !session.client.getServerCapabilities()?.prompts) return;
+            const serverName = session.client.getServerVersion()?.name || "";
+            const result = await session.client.request({ method: "prompts/list", params: { cursor: request.params?.cursor, _meta: request.params?._meta } }, ListPromptsResultSchema);
+            if (result.prompts) {
+              result.prompts.forEach(prompt => {
+                const promptName = `${sanitizeName(serverName)}__${prompt.name}`;
+                promptToClient[promptName] = session;
+                allPrompts.push({ ...prompt, name: promptName, description: `[${serverName}] ${prompt.description || ""}` });
+              });
+            }
+          } catch (error) { 
+            // debugLog(`[ListPrompts Error] Server: ${params.name || uuid} - ${error instanceof Error ? error.message : String(error)}`); // Removed log
           }
-        } catch (error) { console.error(`Error fetching prompts from: ${serverName}`, error); }
-      })
-    );
-    return { prompts: allPrompts, nextCursor: request.params?.cursor };
+        })
+      );
+      return { prompts: allPrompts, nextCursor: request.params?.cursor };
+    } catch (handlerError) {
+       // errorLog("[ListPrompts Handler Error]", handlerError); // Removed log
+       return { 
+         error: "Failed to list prompts due to an internal error.", 
+         details: handlerError instanceof Error ? handlerError.message : String(handlerError),
+         prompts: [] 
+       }; 
+    }
   });
 
   // List Resources Handler
   server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
-    const serverParams = await getMcpServers(true);
-    const allResources: z.infer<typeof ListResourcesResultSchema>["resources"] = [];
-    await Promise.allSettled(
-      Object.entries(serverParams).map(async ([uuid, params]) => {
-        const sessionKey = getSessionKey(uuid, params);
-        const session = await getSession(sessionKey, uuid, params);
-        if (!session || !session.client.getServerCapabilities()?.resources) return;
-        const serverName = session.client.getServerVersion()?.name || "";
-        try {
-          const result = await session.client.request({ method: "resources/list", params: { cursor: request.params?.cursor, _meta: request.params?._meta } }, ListResourcesResultSchema);
-          if (result.resources) {
-            result.resources.forEach(resource => {
-              resourceToClient[resource.uri] = session;
-              allResources.push({ ...resource, name: `[${serverName}] ${resource.name || ""}` });
-            });
+    // Restore original logic, ensure logs are removed
+    try { 
+      const serverParams = await getMcpServers(true);
+      const allResources: z.infer<typeof ListResourcesResultSchema>["resources"] = [];
+      // debugLog(`[ListResources] Found ${Object.keys(serverParams).length} active servers to check.`); // Removed log
+      await Promise.allSettled(
+        Object.entries(serverParams).map(async ([uuid, params]) => {
+          const serverNameLog = params.name || uuid; 
+          try { 
+            const sessionKey = getSessionKey(uuid, params);
+            const session = await getSession(sessionKey, uuid, params);
+            if (!session) {
+              // debugLog(`[ListResources] No session for ${serverNameLog}`); // Removed log
+              return;
+            }
+            
+            const capabilities = session.client.getServerCapabilities();
+            if (!capabilities?.resources) {
+               // debugLog(`[ListResources] Server ${serverNameLog} does not report resource capability.`); // Removed log
+               return;
+            }
+            
+            const actualServerName = session.client.getServerVersion()?.name || serverNameLog; 
+            // debugLog(`[ListResources] Checking server: ${actualServerName} (${uuid})`); // Removed log
+            const result = await session.client.request({ method: "resources/list", params: { cursor: request.params?.cursor, _meta: request.params?._meta } }, ListResourcesResultSchema);
+            // debugLog(`[ListResources] Received ${result.resources?.length ?? 0} resources from ${actualServerName}`); // Removed log
+            if (result.resources) {
+              result.resources.forEach(resource => {
+                resourceToClient[resource.uri] = session; 
+                allResources.push({ ...resource, name: `[${actualServerName}] ${resource.name || ""}` });
+              });
+            }
+          } catch (error) { 
+              // errorLog(`[ListResources] Error processing server ${serverNameLog}:`, error); // Removed log
           }
-        } catch (error) { console.error(`Error fetching resources from: ${serverName}`, error); }
-      })
-    );
-    return { resources: allResources, nextCursor: request.params?.cursor };
+        })
+      );
+      // debugLog(`[ListResources] Returning total ${allResources.length} resources.`); // Removed log
+      return { resources: allResources, nextCursor: request.params?.cursor };
+    } catch (handlerError) { 
+       // errorLog("[ListResources Handler Error]", handlerError); // Removed log
+       return { 
+         error: "Failed to list resources due to an internal error.", 
+         details: handlerError instanceof Error ? handlerError.message : String(handlerError),
+         resources: [] 
+       }; 
+    }
   });
 
   // Read Resource Handler
@@ -210,32 +251,43 @@ export const createServer = async () => {
     try {
       return await clientForResource.client.request({ method: "resources/read", params: { uri, _meta: request.params._meta } }, ReadResourceResultSchema);
     } catch (error) {
-      console.error(`Error reading resource through ${clientForResource.client.getServerVersion()?.name}:`, error);
-      throw error;
+      // errorLog(`Error reading resource through ${clientForResource.client.getServerVersion()?.name}:`, error); // Removed log
+      throw error; // Re-throw for SDK
     }
   });
 
   // List Resource Templates Handler
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request) => {
-    const serverParams = await getMcpServers(true);
-    const allTemplates: ResourceTemplate[] = [];
-    await Promise.allSettled(
-      Object.entries(serverParams).map(async ([uuid, params]) => {
-        const sessionKey = getSessionKey(uuid, params);
-        const session = await getSession(sessionKey, uuid, params);
-        if (!session || !session.client.getServerCapabilities()?.resources) return;
-        const serverName = session.client.getServerVersion()?.name || "";
-        try {
-          const result = await session.client.request({ method: "resources/templates/list", params: { cursor: request.params?.cursor, _meta: request.params?._meta } }, ListResourceTemplatesResultSchema);
-          if (result.resourceTemplates) {
-            result.resourceTemplates.forEach(template => {
-              allTemplates.push({ ...template, name: `[${serverName}] ${template.name || ""}` });
-            });
+     try { 
+      const serverParams = await getMcpServers(true);
+      const allTemplates: ResourceTemplate[] = [];
+      await Promise.allSettled(
+        Object.entries(serverParams).map(async ([uuid, params]) => {
+           try { 
+            const sessionKey = getSessionKey(uuid, params);
+            const session = await getSession(sessionKey, uuid, params);
+            if (!session || !session.client.getServerCapabilities()?.resources) return;
+            const serverName = session.client.getServerVersion()?.name || "";
+            const result = await session.client.request({ method: "resources/templates/list", params: { cursor: request.params?.cursor, _meta: request.params?._meta } }, ListResourceTemplatesResultSchema);
+            if (result.resourceTemplates) {
+              result.resourceTemplates.forEach(template => {
+                allTemplates.push({ ...template, name: `[${serverName}] ${template.name || ""}` });
+              });
+            }
+          } catch (error) { 
+             // debugLog(`Error fetching resource templates from server ${params.name || uuid}:`, error instanceof Error ? error.message : String(error)); // Removed log
           }
-        } catch (error) { /* Ignore errors from individual servers */ }
-      })
-    );
-    return { resourceTemplates: allTemplates, nextCursor: request.params?.cursor };
+        })
+      );
+      return { resourceTemplates: allTemplates, nextCursor: request.params?.cursor };
+     } catch (handlerError) {
+        // errorLog("[ListResourceTemplates Handler Error]", handlerError); // Removed log
+        return { 
+          error: "Failed to list resource templates due to an internal error.", 
+          details: handlerError instanceof Error ? handlerError.message : String(handlerError),
+          resourceTemplates: [] 
+        }; 
+     }
   });
 
   const cleanup = async () => {

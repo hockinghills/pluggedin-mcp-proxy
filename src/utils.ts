@@ -2,6 +2,14 @@ import { ServerParameters } from "./fetch-pluggedinmcp.js";
 import crypto from "crypto";
 
 /**
+ * Check if debug logging is enabled via environment variable.
+ */
+export const isDebugEnabled = (): boolean => {
+  // Check for 'true' or '1' to enable debugging
+  return process.env.MCP_PROXY_DEBUG === 'true' || process.env.MCP_PROXY_DEBUG === '1';
+};
+
+/**
  * Environment variables to inherit by default, if an environment is not explicitly given.
  */
 export const DEFAULT_INHERITED_ENV_VARS =

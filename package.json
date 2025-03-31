@@ -1,6 +1,6 @@
 {
   "name": "@veriteknik/pluggedin-mcp-proxy",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "description": "MCP Server PluggedinMCP manages all your other MCPs in one MCP.",
   "scripts": {
     "build": "tsc && shx chmod +x dist/*.js",
