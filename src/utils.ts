@@ -11,14 +11,16 @@ export const sanitizeName = (name: string): string => {
   return name.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
 };
 
-// Helper function to get the API key
-export const getPluggedinMCPApiKey = (): string | undefined => {
-  return process.env.PLUGGEDIN_API_KEY;
+// Helper function to get the API key, prioritizing argument over environment variable
+export const getPluggedinMCPApiKey = (apiKey?: string): string | undefined => {
+  // Prioritize argument, then environment variable
+  return apiKey ?? process.env.PLUGGEDIN_API_KEY;
 };
 
-// Helper function to get the API base URL
-export const getPluggedinMCPApiBaseUrl = (): string | undefined => {
-  return process.env.PLUGGEDIN_API_BASE_URL;
+// Helper function to get the API base URL, prioritizing argument, then env var, then hardcoded default
+export const getPluggedinMCPApiBaseUrl = (baseUrl?: string): string | undefined => {
+  // Prioritize argument, then environment variable, then fallback
+  return baseUrl ?? process.env.PLUGGEDIN_API_BASE_URL ?? 'https://plugged.in';
 };
 
 // Helper function to check if debug logging is enabled
