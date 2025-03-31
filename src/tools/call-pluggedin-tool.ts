@@ -46,14 +46,23 @@ const CallPluggedinToolSchema = z.object({
 // Get logger instance from the DI container
 const logger = container.get<Logger>('logger');
 
+/**
+ * ToolPlugin implementation for the 'tool_call' static tool.
+ * Proxies a tool call to the appropriate downstream MCP server based on the prefixed tool name.
+ */
 export class CallPluggedinToolTool implements ToolPlugin {
-  readonly name = toolName; // Use readonly instance property
-  readonly description = toolDescription; // Use readonly instance property
-  readonly inputSchema = CallPluggedinToolSchema; // Use readonly instance property
+  readonly name = toolName;
+  readonly description = toolDescription;
+  readonly inputSchema = CallPluggedinToolSchema;
 
-  // Helper function to find the client session for a given prefixed tool name
-  // Note: This involves re-fetching servers and tools on each call, which might be inefficient.
-  // Consider caching or a shared mapping for optimization if performance becomes an issue.
+  /**
+   * Finds the active downstream client session responsible for handling the specified prefixed tool name.
+   * Fetches server configurations and downstream tool lists to map the prefixed name back to its origin.
+   * @param prefixedToolName - The tool name including the server prefix (e.g., 'github__create_issue').
+   * @param requestMeta - Metadata from the original MCP request.
+   * @returns A promise resolving to the ConnectedClient instance or null if not found or inactive.
+   * @private
+   */
   private static async findClientForTool(
     prefixedToolName: string,
     requestMeta: any
@@ -110,15 +119,21 @@ export class CallPluggedinToolTool implements ToolPlugin {
         );
       }
     }
-    return null; // Tool not found or associated client session couldn't be established
+    return null; // Tool not found, inactive, or associated client session couldn't be established
   }
 
-  // This method will be called by the MCP server when the tool is invoked
-  // Updated to match ToolPlugin interface
+  /**
+   * Executes the 'tool_call' logic.
+   * Finds the correct downstream server based on the prefixed tool name,
+   * extracts the original tool name, and proxies the 'tools/call' request.
+   * @param args - Validated input arguments containing 'tool_name' and 'arguments'.
+   * @param meta - Optional request metadata containing progress tokens etc.
+   * @returns A promise resolving to the ToolExecutionResult from the downstream server.
+   */
   async execute(
-    args: z.infer<typeof CallPluggedinToolSchema>, // Use validated args
-    meta?: any // Optional meta, contains metadata like progress tokens
-  ): Promise<ToolExecutionResult> { // Return type matches ToolPlugin interface
+    args: z.infer<typeof CallPluggedinToolSchema>,
+    meta?: any
+  ): Promise<ToolExecutionResult> {
     const { tool_name: prefixedToolName, arguments: toolArgs } = args;
 
     // Pass meta to findClientForTool if needed, currently it uses requestMeta directly

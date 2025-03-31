@@ -1,5 +1,8 @@
-import fs from 'fs'; // Import fs for file logging
+import fs from 'fs';
 
+/**
+ * Defines the available logging levels.
+ */
 export enum LogLevel {
   NONE = 0,
   ERROR = 1,
@@ -8,14 +11,29 @@ export enum LogLevel {
   DEBUG = 4
 }
 
+/**
+ * Singleton Logger class for handling application logging.
+ * Supports different log levels and optional logging to a file.
+ * Reads configuration from environment variables:
+ * - LOG_LEVEL: (NONE, ERROR, WARN, INFO, DEBUG) - defaults to ERROR
+ * - LOG_TO_FILE: ('true' | 'false') - defaults to false
+ * - LOG_FILE_PATH: (string) - path to the log file, required if LOG_TO_FILE is true.
+ */
 export class Logger {
   private static instance: Logger;
-  private logLevel: LogLevel = LogLevel.ERROR; // Default to ERROR
+  private logLevel: LogLevel = LogLevel.ERROR;
   private logToFile: boolean = false;
   private logFilePath: string | null = null;
 
-  private constructor() {}
+  private constructor() {
+    // Private constructor for singleton pattern
+  }
 
+  /**
+   * Gets the singleton instance of the Logger.
+   * Initializes the logger based on environment variables on first call.
+   * @returns The singleton Logger instance.
+   */
   static getInstance(): Logger {
     if (!Logger.instance) {
       Logger.instance = new Logger();
@@ -72,34 +90,65 @@ export class Logger {
     return Logger.instance;
   }
 
+  /**
+   * Sets the logging level dynamically.
+   * @param level - The minimum log level to output.
+   */
   setLogLevel(level: LogLevel): void {
     this.logLevel = level;
   }
 
+  /**
+   * Logs a debug message if the current log level allows it.
+   * @param message - The main log message.
+   * @param args - Additional arguments to log (will be stringified).
+   */
   debug(message: string, ...args: any[]): void {
     if (this.logLevel >= LogLevel.DEBUG) {
       this.log('DEBUG', message, ...args);
     }
   }
 
+  /**
+   * Logs an info message if the current log level allows it.
+   * @param message - The main log message.
+   * @param args - Additional arguments to log (will be stringified).
+   */
   info(message: string, ...args: any[]): void {
     if (this.logLevel >= LogLevel.INFO) {
       this.log('INFO', message, ...args);
     }
   }
 
+  /**
+   * Logs a warning message if the current log level allows it.
+   * @param message - The main log message.
+   * @param args - Additional arguments to log (will be stringified).
+   */
   warn(message: string, ...args: any[]): void {
     if (this.logLevel >= LogLevel.WARN) {
       this.log('WARN', message, ...args);
     }
   }
 
+  /**
+   * Logs an error message if the current log level allows it.
+   * @param message - The main log message.
+   * @param args - Additional arguments to log (will be stringified).
+   */
   error(message: string, ...args: any[]): void {
     if (this.logLevel >= LogLevel.ERROR) {
       this.log('ERROR', message, ...args);
     }
   }
 
+  /**
+   * Internal log method that formats the message and handles output
+   * to stderr and/or a file based on configuration.
+   * @param level - The string representation of the log level (e.g., 'DEBUG').
+   * @param message - The main log message.
+   * @param args - Additional arguments.
+   */
   private log(level: string, message: string, ...args: any[]): void {
     const timestamp = new Date().toISOString();
     const formattedArgs = args.map(arg =>

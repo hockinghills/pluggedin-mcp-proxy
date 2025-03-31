@@ -18,14 +18,27 @@ const RefreshToolsSchema = z.object({});
 // Get logger instance from the DI container
 const logger = container.get<Logger>('logger');
 
+/**
+ * ToolPlugin implementation for the 'refresh_tools' static tool.
+ * Invalidates the tool cache and triggers a background process to rediscover
+ * and report capabilities from all downstream servers.
+ */
 export class RefreshToolsPlugin implements ToolPlugin {
   readonly name = toolName;
   readonly description = toolDescription;
   readonly inputSchema = RefreshToolsSchema;
 
+  /**
+   * Executes the 'refresh_tools' logic.
+   * Invalidates the cache and starts the background reporting process.
+   * Returns immediately with a confirmation message.
+   * @param args - Validated input arguments (empty object for this tool).
+   * @param meta - Optional request metadata (not used by this tool).
+   * @returns A promise resolving to a ToolExecutionResult confirming the process initiation.
+   */
   async execute(
-    args: z.infer<typeof RefreshToolsSchema>, // Validated args (empty object)
-    meta?: any // Optional meta
+    args: z.infer<typeof RefreshToolsSchema>,
+    meta?: any
   ): Promise<ToolExecutionResult> {
     logger.info("Refresh tools request received. Invalidating cache and starting background refresh...");
 

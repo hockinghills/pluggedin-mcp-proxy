@@ -1,119 +1,233 @@
-# PluggedinMCP MCP Server
+# plugged.in MCP Proxy Server
 
-[https://plugged.in](https://plugged.in): The One MCP to manage all your MCPs
+<div align="center">
+  <img src="https://via.placeholder.com/200x200?text=plugged.in" alt="plugged.in Logo" width="200" height="200">
+  <h3>The Crossroads for AI Data Exchanges</h3>
+  <p>A unified interface for managing all your MCP servers</p>
 
-PluggedinMCP MCP Server is a proxy server that joins multiple MCP⁠ servers into one. It fetches tool/prompt/resource configurations from PluggedinMCP App⁠ and routes tool/prompt/resource requests to the correct underlying server.
+  [![GitHub Stars](https://img.shields.io/github/stars/VeriTeknik/pluggedin-mcp?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/stargazers)
+  [![License](https://img.shields.io/github/license/VeriTeknik/pluggedin-mcp?style=for-the-badge)](LICENSE)
+  [![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+  [![MCP](https://img.shields.io/badge/MCP-Compatible-green?style=for-the-badge)](https://modelcontextprotocol.io/)
+</div>
 
-[![smithery badge](https://smithery.ai/badge/@VeriTeknik/pluggedin-mcp-proxy)](https://smithery.ai/server/@VeriTeknik/pluggedin-mcp-proxy)
+## 📋 Overview
 
+The plugged.in MCP Proxy Server is a powerful middleware that aggregates multiple Machine Conversation Protocol (MCP) servers into a single unified interface. It fetches tool, prompt, and resource configurations from the [plugged.in App](https://github.com/VeriTeknik/pluggedin-app) and intelligently routes requests to the appropriate underlying MCP servers.
 
-PluggedinMCP App repo: https://github.com/VeriTeknik/pluggedin-app
+This proxy enables seamless integration with any MCP client (Claude, Cline, Cursor, etc.) while providing advanced management capabilities through the plugged.in ecosystem.
 
-## Key Features
+## ✨ Key Features
 
-- **MCP Playground**: Interactive environment to test and experiment with your MCP tools
-- **Multi-Server Support**: Connect both STDIO (command-line) and SSE (HTTP-based) MCP servers
-- **Custom MCP Servers**: Create and manage your own Python-based MCP servers
+- **Universal MCP Compatibility**: Works with any MCP client including Claude Desktop, Cline, and Cursor
+- **Multi-Server Support**: Connect both STDIO (command-line) and WebSocket (HTTP-based) MCP servers
+- **Namespace Isolation**: Keep joined MCPs separate and organized with proper prefixing
 - **Multi-Workspace Layer**: Switch between different sets of MCP configurations with one click
-- **Namespace Isolation**: Keep joined MCPs separate and organized
-- **LLM Integration**: Seamless integration with OpenAI and Anthropic models
-- **Real-time Updates**: GUI dynamic updates of MCP configurations
-- **Universal Compatibility**: Works with any MCP client
-- **Smithery Compatibility**: Includes static `get_tools` and `tool_call` endpoints for improved compatibility with discovery platforms like Smithery.
-- **Dynamic Versioning**: Server version is read dynamically from `package.json`.
-- **Backend Interaction**: Reports discovered tools to the `pluggedin-app` backend and fetches inactive tool status (if the `TOOLS_MANAGEMENT` capability is enabled for the user's profile in `pluggedin-app`).
+- **Real-time Updates**: Dynamic updates of MCP configurations through the plugged.in App
+- **Tool Management**: Discover, report, and manage tools across all connected MCP servers
+- **Intelligent Routing**: Automatically route tool calls to the appropriate underlying MCP server
+- **Streamable HTTP Support**: Implements the latest MCP specification for streaming responses
 
-## Installation
+## 🚀 Quick Start
 
-### Installing via Smithery
+### Prerequisites
 
-Sometimes Smithery works (confirmed in Windsurf locally) but sometimes it is unstable because PluggedinMCP is special that it runs other MCPs on top of it. Please consider using manual installation if it doesn't work instead.
+- Node.js 18+ (recommended v20+)
+- An API key from the plugged.in App (get one at [plugged.in/api-keys](https://plugged.in/api-keys))
 
-To install PluggedinMCP MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@VeriTeknik/pluggedin-mcp-proxy):
+### Installation
 
 ```bash
-npx -y @smithery/cli install @VeriTeknik/pluggedin-mcp-proxy --client claude
+# Install and run with npx
+npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY
 ```
 
-### Manual Installation
+### Configuration for MCP Clients
 
-```bash
-export PLUGGEDIN_API_KEY=<env>
-npx -y @pluggedin/pluggedin-mcp-proxy@latest
-```
+#### Claude Desktop
+
+Add the following to your Claude Desktop configuration:
 
 ```json
 {
   "mcpServers": {
-    "PluggedinMCP": {
+    "pluggedin": {
       "command": "npx",
-      "args": ["-y", "@pluggedin/pluggedin-mcp-proxy@latest"],
+      "args": ["-y", "@pluggedin/mcp-proxy@latest"],
       "env": {
-        "PLUGGEDIN_API_KEY": "<your api key>"
+        "PLUGGEDIN_API_KEY": "YOUR_API_KEY"
       }
     }
   }
 }
 ```
 
-## Environment Variables
+#### Cline
 
-- PLUGGEDIN_API_KEY: Required. Obtained from PluggedinMCP App's "API Keys" page (https://plugged.in/api-keys).
-- PLUGGEDIN_API_BASE_URL: Optional override for PluggedinMCP App URL (e.g. http://localhost:12005).
+Add the following to your Cline configuration:
 
-## Command Line Arguments
-
-You can configure the API key and base URL using command line arguments:
-
-```bash
-npx -y @pluggedin/pluggedin-mcp-proxy@latest --pluggedin-api-key <your-api-key> --pluggedin-api-base-url <base-url>
+```json
+{
+  "mcpServers": {
+    "pluggedin": {
+      "command": "npx",
+      "args": ["-y", "@pluggedin/mcp-proxy@latest"],
+      "env": {
+        "PLUGGEDIN_API_KEY": "YOUR_API_KEY"
+      }
+    }
+  }
+}
 ```
 
-For help with all available options:
+#### Cursor
+
+For Cursor, you can use command-line arguments instead of environment variables:
 
 ```bash
-npx -y @pluggedin/pluggedin-mcp-proxy@latest --help
+npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY
 ```
 
-These command line arguments take precedence over environment variables.
+## ⚙️ Configuration Options
 
-## Architecture Overview
+### Environment Variables
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `PLUGGEDIN_API_KEY` | API key from plugged.in App | Yes | - |
+| `PLUGGEDIN_API_BASE_URL` | Base URL for plugged.in App | No | `https://plugged.in` |
+
+### Command Line Arguments
+
+Command line arguments take precedence over environment variables:
+
+```bash
+npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY --pluggedin-api-base-url https://your-custom-url.com
+```
+
+For a complete list of options:
+
+```bash
+npx -y @pluggedin/mcp-proxy@latest --help
+```
+
+## 🐳 Docker Usage
+
+You can also build and run the proxy server using Docker.
+
+### Building the Image
+
+Ensure you have Docker installed and running. Navigate to the `pluggedin-mcp` directory and run:
+
+```bash
+docker build -t pluggedin-mcp-proxy:latest .
+```
+
+A `.dockerignore` file is included to optimize the build context.
+
+### Running the Container
+
+Run the container, providing the necessary environment variables:
+
+```bash
+docker run -it --rm \
+  -e PLUGGEDIN_API_KEY="YOUR_API_KEY" \
+  -e PLUGGEDIN_API_BASE_URL="YOUR_API_BASE_URL" \
+  --name pluggedin-mcp-container \
+  pluggedin-mcp-proxy:latest
+```
+
+Replace `YOUR_API_KEY` and `YOUR_API_BASE_URL` (if not using the default `https://plugged.in`).
+
+### Testing with MCP Inspector
+
+While the container is running, you can connect to it using the MCP Inspector:
+
+```bash
+npx @modelcontextprotocol/inspector docker://pluggedin-mcp-container
+```
+
+This will connect to the standard input/output of the running container.
+
+### Stopping the Container
+
+Press `Ctrl+C` in the terminal where `docker run` is executing. The `--rm` flag ensures the container is removed automatically upon stopping.
+
+## 🏗️ System Architecture
+
+The plugged.in MCP Proxy Server acts as a bridge between MCP clients and multiple underlying MCP servers:
 
 ```mermaid
 sequenceDiagram
     participant MCPClient as MCP Client (e.g. Claude Desktop)
-    participant PluggedinMCP-mcp-server as PluggedinMCP MCP Server
-    participant PluggedinMCPApp as PluggedinMCP App
-    participant MCPServers as Installed MCP Servers in Plugged.in App
+    participant PluggedinMCP as plugged.in MCP Proxy
+    participant PluggedinApp as plugged.in App
+    participant MCPServers as Underlying MCP Servers
 
-    MCPClient ->> PluggedinMCP-mcp-server: Request list tools (tools/list)
-    PluggedinMCP-mcp-server ->> MCPClient: Return static tools (get_tools, tool_call)
-
-    MCPClient ->> PluggedinMCP-mcp-server: Call get_tools
-    PluggedinMCP-mcp-server ->> PluggedinMCPApp: Get active server configurations & profile capabilities
-    PluggedinMCPApp ->> PluggedinMCP-mcp-server: Return server configurations & capabilities
+    MCPClient ->> PluggedinMCP: Request list tools (tools/list)
+    PluggedinMCP ->> PluggedinApp: Get active server configurations
+    PluggedinApp ->> PluggedinMCP: Return server configurations
+    
     opt If TOOLS_MANAGEMENT capability enabled
-        PluggedinMCP-mcp-server ->> PluggedinMCPApp: Get inactive tool list (GET /api/tools?status=INACTIVE)
-        PluggedinMCPApp ->> PluggedinMCP-mcp-server: Return inactive tool list
+        PluggedinMCP ->> PluggedinApp: Get inactive tool list
+        PluggedinApp ->> PluggedinMCP: Return inactive tool list
     end
+    
     loop For each active MCP Server
-        PluggedinMCP-mcp-server ->> MCPServers: Request list_tools
-        MCPServers ->> PluggedinMCP-mcp-server: Return list of tools
+        PluggedinMCP ->> MCPServers: Request list_tools
+        MCPServers ->> PluggedinMCP: Return list of tools
+        
         opt If TOOLS_MANAGEMENT capability enabled
-             PluggedinMCP-mcp-server ->> PluggedinMCPApp: Report discovered tools (POST /api/tools)
-             PluggedinMCPApp ->> PluggedinMCP-mcp-server: Report confirmation
+             PluggedinMCP ->> PluggedinApp: Report discovered tools
+             PluggedinApp ->> PluggedinMCP: Report confirmation
         end
     end
-    PluggedinMCP-mcp-server ->> PluggedinMCP-mcp-server: Aggregate & Filter proxied tool lists
-    PluggedinMCP-mcp-server ->> MCPClient: Return aggregated list of active proxied tools
+    
+    PluggedinMCP ->> PluggedinMCP: Aggregate & Filter tool lists
+    PluggedinMCP ->> MCPClient: Return aggregated list of active tools
 
-    MCPClient ->> PluggedinMCP-mcp-server: Call tool_call (with prefixed tool name)
-    PluggedinMCP-mcp-server ->> PluggedinMCP-mcp-server: Find target downstream server
-    PluggedinMCP-mcp-server ->> MCPServers: call_tool (with original tool name)
-    MCPServers ->> PluggedinMCP-mcp-server: Return tool response
-    PluggedinMCP-mcp-server ->> MCPClient: Return tool response
+    MCPClient ->> PluggedinMCP: Call tool (with prefixed tool name)
+    PluggedinMCP ->> PluggedinMCP: Find target downstream server
+    PluggedinMCP ->> MCPServers: call_tool (with original tool name)
+    MCPServers ->> PluggedinMCP: Return tool response
+    PluggedinMCP ->> MCPClient: Return tool response
 ```
 
-## Credits
-- Forked from https://github.com/metatool-ai/mcp-server-metamcp
-- Inspirations and some code (refactored in this project) from https://github.com/adamwattis/mcp-proxy-server/
+## 🔄 Workflow
+
+1. **Configuration**: The proxy fetches server configurations from the plugged.in App
+2. **Tool Discovery**: The proxy connects to each configured MCP server and discovers available tools
+3. **Tool Reporting**: Discovered tools are reported back to the plugged.in App for management
+4. **Tool Aggregation**: All active tools are aggregated and presented to the MCP client
+5. **Request Routing**: Tool calls from the client are routed to the appropriate underlying MCP server
+6. **Response Handling**: Responses from the underlying servers are returned to the client
+
+## 🧩 Integration with plugged.in App
+
+The plugged.in MCP Proxy Server is designed to work seamlessly with the [plugged.in App](https://github.com/VeriTeknik/pluggedin-app), which provides:
+
+- A web-based interface for managing MCP server configurations
+- Tool discovery and management capabilities
+- Multi-workspace support for different configuration sets
+- An interactive playground for testing MCP tools
+- User authentication and API key management
+
+## 📚 Related Resources
+
+- [plugged.in App Repository](https://github.com/VeriTeknik/pluggedin-app)
+- [Machine Conversation Protocol (MCP) Specification](https://modelcontextprotocol.io/)
+- [Claude Desktop Documentation](https://docs.anthropic.com/claude/docs/claude-desktop)
+- [Cline Documentation](https://docs.cline.bot/)
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgements
+
+- Inspired by the [MCP Proxy Server](https://github.com/adamwattis/mcp-proxy-server/)
+- Built on the [Machine Conversation Protocol](https://modelcontextprotocol.io/)

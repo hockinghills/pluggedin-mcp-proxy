@@ -1,9 +1,18 @@
 // src/cache.ts
+
+/**
+ * A generic in-memory cache with Time-To-Live (TTL) support.
+ * @template T The type of data to be stored in the cache.
+ */
 export class Cache<T> {
-  private cache: Map<string, {data: T, timestamp: number}> = new Map();
+  private cache: Map<string, { data: T; timestamp: number }> = new Map();
   private ttl: number; // Time-to-live in milliseconds
 
-  constructor(ttlMs: number = 60000) { // Default 1 minute TTL
+  /**
+   * Creates an instance of Cache.
+   * @param {number} [ttlMs=60000] - The time-to-live for cache entries in milliseconds. Defaults to 1 minute.
+   */
+  constructor(ttlMs: number = 60000) {
     this.ttl = ttlMs;
   }
 

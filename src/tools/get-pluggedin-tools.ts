@@ -34,15 +34,53 @@ const GetPluggedinToolsSchema = z.object({});
 
 // Get logger and cache instances from the DI container
 const logger = container.get<Logger>('logger');
-// const logger = container.get<Logger>('logger'); // Removed duplicate
 const toolsCache = container.get<Cache<string>>('toolsCache');
 
-export class GetPluggedinToolsTool implements ToolPlugin {
-  readonly name = toolName; // Use readonly instance property
-  readonly description = toolDescription; // Use readonly instance property
-  readonly inputSchema = GetPluggedinToolsSchema; // Use readonly instance property
+/**
+ * Helper function to fetch server names from the pluggedin-app API.
+ * Used for prefixing tool names. Returns an empty object on failure.
+ * @param apiBaseUrl - The base URL of the pluggedin-app API.
+ * @param apiKey - The API key for authentication.
+ * @returns A promise resolving to a record mapping server UUIDs to server names.
+ */
+async function _fetchServerNames(apiBaseUrl: string, apiKey: string): Promise<Record<string, string>> {
+  const serverNames: Record<string, string> = {};
+  try {
+    logger.debug("Fetching server names for tool prefixing...");
+    const serversResponse = await axios.get(
+      `${apiBaseUrl}/api/mcp-servers`, // Assuming this endpoint exists
+      { headers: { Authorization: `Bearer ${apiKey}` } }
+    );
+    if (serversResponse.data && typeof serversResponse.data === 'object') {
+      Object.entries(serversResponse.data).forEach(([uuid, serverData]: [string, any]) => {
+        if (serverData && serverData.name) {
+          serverNames[uuid] = serverData.name;
+        }
+      });
+      logger.debug(`Fetched ${Object.keys(serverNames).length} server names.`);
+    } else {
+      logger.warn("Invalid response structure from /api/mcp-servers when fetching names.");
+    }
+  } catch (serverFetchError) {
+    logger.error("Error fetching server names for prefixing:", serverFetchError);
+    // Proceed without prefixing if server names cannot be fetched, returning empty map
+  }
+  return serverNames;
+}
 
-  // Method to invalidate the cache (will be called by refresh_tools)
+/**
+ * ToolPlugin implementation for the 'get_tools' static tool.
+ * Fetches the list of available proxied tools (names only) from the pluggedin-app API cache.
+ */
+export class GetPluggedinToolsTool implements ToolPlugin {
+  readonly name = toolName;
+  readonly description = toolDescription;
+  readonly inputSchema = GetPluggedinToolsSchema;
+
+  /**
+   * Invalidates the cache entry for the current API key.
+   * Intended to be called by the 'refresh_tools' plugin.
+   */
   static invalidateCache(): void {
     const apiKey = getPluggedinMCPApiKey();
     if (apiKey) {
@@ -54,12 +92,18 @@ export class GetPluggedinToolsTool implements ToolPlugin {
     }
   }
 
-  // This method fetches the cached tool list from the pluggedin-app API
-  // Updated to match ToolPlugin interface
+  /**
+   * Executes the 'get_tools' logic.
+   * Checks the cache first, then fetches from the API if necessary.
+   * Prefixes tool names with their server names (fetched separately).
+   * @param args - Validated input arguments (empty object for this tool).
+   * @param meta - Optional request metadata (not used by this tool).
+   * @returns A promise resolving to a ToolExecutionResult containing the JSON stringified list of tool names.
+   */
   async execute(
-    args: z.infer<typeof GetPluggedinToolsSchema>, // Use validated args (empty object)
-    meta?: any // Optional meta
-  ): Promise<ToolExecutionResult> { // Return type matches ToolPlugin interface
+    args: z.infer<typeof GetPluggedinToolsSchema>,
+    meta?: any
+  ): Promise<ToolExecutionResult> {
 
     const apiKey = getPluggedinMCPApiKey();
     const apiBaseUrl = getPluggedinMCPApiBaseUrl();
@@ -113,30 +157,8 @@ export class GetPluggedinToolsTool implements ToolPlugin {
       // Assuming the API returns objects with a 'name' and 'mcp_server_uuid'
       // We also need the server name for prefixing, which might require another API call or adjustment to /api/tools response
       
-      // --- TEMPORARY WORKAROUND: Fetch server names separately ---
-      // This adds an extra API call, ideally /api/tools should include server names
-      let serverNames: Record<string, string> = {};
-      try {
-        const serversResponse = await axios.get(
-          `${apiBaseUrl}/api/mcp-servers`, // Assuming this endpoint exists and returns { uuid: { name: ... } }
-           { headers: { Authorization: `Bearer ${apiKey}` } }
-        );
-        if (serversResponse.data && typeof serversResponse.data === 'object') {
-           // Assuming the response format is { [uuid]: { name: 'serverName', ... } }
-           Object.entries(serversResponse.data).forEach(([uuid, serverData]: [string, any]) => {
-             if (serverData && serverData.name) {
-               serverNames[uuid] = serverData.name;
-              }
-            });
-         } else {
-            logger.warn("Invalid response structure from /api/mcp-servers");
-         }
-       } catch (serverFetchError) {
-          logger.error("Error fetching server names for prefixing:", serverFetchError);
-          // Proceed without prefixing if server names cannot be fetched
-       }
-      // --- END TEMPORARY WORKAROUND ---
-
+      // Fetch server names using the helper function
+      const serverNames = await _fetchServerNames(apiBaseUrl, apiKey);
 
       const toolsFromApi: Array<{ name: string; mcp_server_uuid: string; description?: string }> = response.data.results;
 

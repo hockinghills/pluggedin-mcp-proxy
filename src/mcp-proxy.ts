@@ -360,12 +360,12 @@ export const createServer = async () => {
 
           logger.debug(`Found ${cachedResourcesFromApi.length} cached non-tool resources from API`);
 
-          // Map API response to MCP Resource format and add prefix
+          // Map API response to MCP Resource format, add prefix, and handle nulls
           const mappedCachedResources = cachedResourcesFromApi.map(res => ({
             uri: res.uri,
             name: `[${res.serverName || 'Unknown Server'}] ${res.name || res.uri}`, // Add prefix
-            description: res.description,
-            mediaType: res.mime_type,
+            description: res.description ?? undefined, // Convert null/undefined to undefined
+            mediaType: res.mime_type ?? undefined, // Convert null/undefined to undefined
           }));
 
           // Combine tool resources and cached non-tool resources

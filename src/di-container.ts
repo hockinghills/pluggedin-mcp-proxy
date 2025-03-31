@@ -1,10 +1,12 @@
 // src/di-container.ts
-import { logger, Logger } from "./logging.js";
+import { logger, Logger } from "./logging.js"; // Keep this import for both instance and type
 import { Cache } from "./cache.js";
-import { Tool } from "./types.js"; // Assuming Tool type might be needed later
+import { Tool } from "./types.js"; // Import Tool type for potential future use
+// import { Logger } from "./logging.js"; // Remove duplicate import
 
 /**
- * A simple Dependency Injection (DI) container for managing singleton services.
+ * A simple singleton Dependency Injection (DI) container for managing shared services.
+ * Ensures that core services like logging and caching are instantiated only once.
  */
 export class DIContainer {
   private static instance: DIContainer;

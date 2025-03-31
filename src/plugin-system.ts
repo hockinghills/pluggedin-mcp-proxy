@@ -1,6 +1,6 @@
 // src/plugin-system.ts
 import { ToolSchema, ToolExecutionResult } from "./types.js";
-import { z } from "zod"; // For potential schema validation within plugins
+import { z } from "zod";
 
 /**
  * Interface for a static tool plugin managed by the PluginRegistry.
