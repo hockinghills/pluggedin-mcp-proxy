@@ -19,11 +19,13 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod"; // Keep for validation if re-enabled
 import { getMcpServers } from "./fetch-pluggedinmcp.js";
-import { getSessionKey, sanitizeName, isDebugEnabled } from "./utils.js"; // Import isDebugEnabled
+import { getSessionKey, sanitizeName, isDebugEnabled, getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "./utils.js"; // Import isDebugEnabled and API utils
 import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
 import { ConnectedClient } from "./client.js";
+import axios from "axios"; // Added import
 import { reportToolsToPluggedinMCP } from "./report-tools.js";
 import { getInactiveTools, ToolParameters } from "./fetch-tools.js";
+import { getToolsAsResources } from "./resources-bridge.js"; // Added import
 import {
   getProfileCapabilities,
   ProfileCapability,
@@ -194,14 +196,22 @@ export const createServer = async () => {
 
   // List Resources Handler
   server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
-    // Restore original logic, ensure logs are removed
     try { 
+      console.error("[DEBUG] ListResourcesRequestSchema handler called"); // Added debug log
+
       const serverParams = await getMcpServers(true);
-      const allResources: z.infer<typeof ListResourcesResultSchema>["resources"] = [];
-      // debugLog(`[ListResources] Found ${Object.keys(serverParams).length} active servers to check.`); // Removed log
+      console.error(`[DEBUG] Found ${Object.keys(serverParams).length} active servers`); // Added debug log
+      let allResources: z.infer<typeof ListResourcesResultSchema>["resources"] = []; // Changed to let
+
+      // Get tools as resources first
+      const toolResources = await getToolsAsResources();
+      console.error(`[DEBUG] Found ${toolResources.length} tool resources`); // Added debug log
+      allResources = [...toolResources]; // Initialize with tool resources
+
+      // Then add other resources from MCP servers
       await Promise.allSettled(
         Object.entries(serverParams).map(async ([uuid, params]) => {
-          const serverNameLog = params.name || uuid; 
+          const serverNameLog = params.name || uuid;
           try { 
             const sessionKey = getSessionKey(uuid, params);
             const session = await getSession(sessionKey, uuid, params);
@@ -222,21 +232,26 @@ export const createServer = async () => {
             // debugLog(`[ListResources] Received ${result.resources?.length ?? 0} resources from ${actualServerName}`); // Removed log
             if (result.resources) {
               result.resources.forEach(resource => {
-                resourceToClient[resource.uri] = session; 
-                allResources.push({ ...resource, name: `[${actualServerName}] ${resource.name || ""}` });
+                // Ensure we don't overwrite tool resources if URIs somehow clash (unlikely)
+                if (!resourceToClient[resource.uri]) { 
+                  resourceToClient[resource.uri] = session; 
+                  allResources.push({ ...resource, name: `[${actualServerName}] ${resource.name || ""}` });
+                }
               });
             }
-          } catch (error) { 
+          } catch (error) {
               // errorLog(`[ListResources] Error processing server ${serverNameLog}:`, error); // Removed log
           }
         })
       );
-      // debugLog(`[ListResources] Returning total ${allResources.length} resources.`); // Removed log
+      
+      console.error(`[DEBUG] Returning ${allResources.length} total resources`); // Added debug log
       return { resources: allResources, nextCursor: request.params?.cursor };
     } catch (handlerError) { 
-       // errorLog("[ListResources Handler Error]", handlerError); // Removed log
+       console.error("[DEBUG] Error in ListResourcesRequestSchema handler:", handlerError); // Added debug log
+       // errorLog("[ListResources Handler Error]", handlerError); // Removed log - Replaced with console.error
        return { 
-         error: "Failed to list resources due to an internal error.", 
+         error: "Failed to list resources due to an internal error.",
          details: handlerError instanceof Error ? handlerError.message : String(handlerError),
          resources: [] 
        }; 
@@ -246,10 +261,68 @@ export const createServer = async () => {
   // Read Resource Handler
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
+    
+    // Check if this is a tool resource (using corrected 'mcp://tools/' prefix from Step 6)
+    if (uri.startsWith('mcp://tools/')) {
+      try {
+        // Parse the URI to get server UUID and tool name
+        const parts = uri.substring('mcp://tools/'.length).split('/'); // Adjusted prefix length
+        if (parts.length !== 2) {
+          throw new Error(`Invalid tool resource URI format: ${uri}`);
+        }
+        const [serverUuid, toolName] = parts; // Correct parsing
+        
+        // Fetch the tool details from the database via pluggedin-app API
+        const apiKey = getPluggedinMCPApiKey();
+        const apiBaseUrl = getPluggedinMCPApiBaseUrl();
+        
+        if (!apiKey || !apiBaseUrl) {
+          throw new Error("API key or base URL not set, cannot fetch tool details");
+        }
+        
+        // Fetch the specific tool
+        const response = await axios.get(
+          `${apiBaseUrl}/api/tools/${serverUuid}/${toolName}`, // Assumes this endpoint exists (Step 4)
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+            },
+          }
+        );
+        
+        if (!response.data || !response.data.tool) {
+          throw new Error(`Tool not found for URI: ${uri}`);
+        }
+        
+        // Return the tool details as resource content
+        // Note: ReadResourceResultSchema expects an object with 'contents' array
+        // We need to adapt the response format or adjust the expectation.
+        // For now, returning a simplified structure. SDK might need adjustment or a different result schema.
+        // Let's return the raw JSON string as text content for simplicity, matching the expected structure.
+        return {
+          contents: [{
+            uri: uri,
+            mimeType: "application/json",
+            text: JSON.stringify(response.data.tool, null, 2),
+          }],
+        };
+
+      } catch (error) {
+        // errorLog(`Error reading tool resource: ${uri}`, error); // Removed log
+        // Re-throw a more specific error if possible, or the original error
+        throw new Error(`Failed to read tool resource ${uri}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    
+    // Handle regular resources with existing code
     const clientForResource = resourceToClient[uri];
     if (!clientForResource) throw new Error(`Unknown resource: ${uri}`);
     try {
-      return await clientForResource.client.request({ method: "resources/read", params: { uri, _meta: request.params._meta } }, ReadResourceResultSchema);
+      // Ensure the proxied request uses the original URI
+      return await clientForResource.client.request(
+        { method: "resources/read", params: { uri, _meta: request.params._meta } }, 
+        ReadResourceResultSchema
+      );
     } catch (error) {
       // errorLog(`Error reading resource through ${clientForResource.client.getServerVersion()?.name}:`, error); // Removed log
       throw error; // Re-throw for SDK
