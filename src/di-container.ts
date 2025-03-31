@@ -1,7 +1,7 @@
 // src/di-container.ts
-import { logger, Logger } from "./logging.js"; // Keep this import for both instance and type
+import { logger, Logger } from "./logging.js";
 import { Cache } from "./cache.js";
-import { Tool } from "./types.js"; // Import Tool type for potential future use
+import { ToolsCacheEntry } from "./types.js"; // Import the new cache entry type
 // import { Logger } from "./logging.js"; // Remove duplicate import
 
 /**
@@ -37,9 +37,9 @@ export class DIContainer {
     // Register Logger instance
     this.register<Logger>('logger', logger); // Use the already instantiated singleton logger
 
-    // Register Tool Names Cache (stringified JSON array)
-    // Cache for 5 minutes (300,000 ms) - Matches instantiation in get-pluggedin-tools.ts
-    this.register<Cache<string>>('toolsCache', new Cache<string>(5 * 60 * 1000));
+    // Register Tool Names Cache using ToolsCacheEntry and 1-hour TTL
+    const TOOLS_CACHE_TTL_MS = 3600000; // 1 hour
+    this.register<Cache<ToolsCacheEntry>>('toolsCache', new Cache<ToolsCacheEntry>(TOOLS_CACHE_TTL_MS));
 
     // Register other caches or services as needed
     // e.g., this.register('resourceCache', new Cache<ResourceInfo[]>(10 * 60 * 1000));

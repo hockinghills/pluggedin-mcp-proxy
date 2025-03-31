@@ -100,4 +100,12 @@ export interface PluggedinMCPResourceReport extends ResourceInfo {
   // Add status if needed for resources
 }
 
+/**
+ * Structure for caching tool names (stringified JSON list) with expiration.
+ */
+export interface ToolsCacheEntry {
+  value: string;
+  expiresAt: number;
+}
+
 // Add other shared types as needed throughout the project.

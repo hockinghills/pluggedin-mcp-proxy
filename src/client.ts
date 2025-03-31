@@ -10,8 +10,8 @@ import { createRequire } from 'module';
 import { container } from './di-container.js'; // Import container
 import { Logger } from './logging.js'; // Import Logger type
 
-const require = createRequire(import.meta.url);
-const packageJson = require('../package.json');
+const customRequire = createRequire(import.meta.url);
+const packageJson = customRequire('../package.json');
 
 // Get logger instance
 const logger = container.get<Logger>('logger');

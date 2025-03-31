@@ -15,7 +15,9 @@ import { clearToolOriginMap, registerToolOrigin } from './tool-registry.js'; // 
 interface ReportResult {
   successCount: number;
   failureCount: number;
-  errors: { item: any, error: string }[]; // Generic error structure
+  errors?: { item: any, error: string }[]; // Keep for general/unexpected errors or backward compatibility
+  validationErrors?: { item: any, error: string }[]; // For input/config validation issues
+  apiErrors?: { item: any, error: string }[]; // For errors during the API call itself
   results?: any[]; // Optional results array for tools
   success?: boolean; // Optional success flag for tools
   error?: string; // Top-level error message
@@ -32,71 +34,77 @@ export async function reportToolsToPluggedinMCP(tools: PluggedinMCPToolReport[])
     const apiKey = getPluggedinMCPApiKey();
     const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
-    if (!apiKey || !apiBaseUrl) { // Also check apiBaseUrl
+    // Configuration Error Handling
+    if (!apiKey || !apiBaseUrl) {
       logger.error("API key or base URL not set for reporting tools");
-      // Return full ReportResult structure
-      return { error: "API key or base URL not set", successCount: 0, failureCount: 0, errors: [] };
-    }
-
-    // Validate that tools is an array
-    if (!Array.isArray(tools) || tools.length === 0) {
-      // Return full ReportResult structure
       return {
-        error: "Request must include a non-empty array of tools",
-        status: 400,
+        error: "Configuration Error",
+        validationErrors: [{ item: 'Configuration', error: "API key or base URL not set" }],
         successCount: 0,
-        failureCount: 0,
+        failureCount: tools.length, // Assume all fail if config is bad
+        apiErrors: [],
         errors: []
       };
     }
 
-    // Validate required fields for all tools and prepare for submission
-    const validTools: PluggedinMCPToolReport[] = [];
-    const errors: { tool: PluggedinMCPToolReport, error: string }[] = [];
-
-    for (const tool of tools) {
-      // Destructure using the imported type definition
-      const { name, description, inputSchema, mcp_server_uuid, status } = tool;
-
-      // Validate required fields for each tool
-      // Note: inputSchema is the correct field name from the Tool type
-      if (!name || !inputSchema || !mcp_server_uuid) {
-        errors.push({
-          tool,
-          error:
-            "Missing required fields: name, inputSchema, or mcp_server_uuid",
-        });
-        continue;
-      }
-
-      // Push the validated tool using the correct type structure
-      validTools.push({
-        name,
-        description,
-        inputSchema: inputSchema, // Use the correct field name from the type
-        mcp_server_uuid,
-        status: status || "ACTIVE", // Default status if not provided
-      });
+    // Input Validation: Basic check
+    if (!Array.isArray(tools)) { // Removed || tools.length === 0 check, empty array is valid input but results in no API call
+      return {
+        error: "Input Error",
+        validationErrors: [{ item: 'Input', error: "Request must include an array of tools" }],
+        status: 400,
+        successCount: 0,
+        failureCount: 0, // No tools attempted
+        apiErrors: [],
+        errors: []
+      };
     }
 
-    // Prepare payload for API, potentially mapping field names if needed
+    // Input Validation: Per-tool check
+    const validTools: PluggedinMCPToolReport[] = [];
+    const validationFailures: { item: PluggedinMCPToolReport, error: string }[] = [];
+
+    for (const tool of tools) {
+      const { name, description, inputSchema, mcp_server_uuid, status } = tool;
+      if (!name || !inputSchema || !mcp_server_uuid) {
+        validationFailures.push({
+          item: tool,
+          error: "Missing required fields: name, inputSchema, or mcp_server_uuid",
+        });
+      } else {
+        validTools.push({
+          name,
+          description,
+          inputSchema: inputSchema,
+          mcp_server_uuid,
+          status: status || "ACTIVE",
+        });
+      }
+    }
+
+    // Prepare payload only with valid tools
     const apiPayload = {
        tools: validTools.map(vt => ({
           name: vt.name,
           description: vt.description,
-          toolSchema: vt.inputSchema, // Send inputSchema as toolSchema to API
+          toolSchema: vt.inputSchema,
           mcp_server_uuid: vt.mcp_server_uuid,
           status: vt.status
        }))
     };
 
-    // Submit valid tools to PluggedinMCP API
-    let results: any[] = [];
+    let apiResults: any[] = [];
+    let apiCallErrors: { item: any, error: string }[] = [];
+    let apiErrorMessage: string | undefined = undefined;
+    let apiErrorStatus: number | undefined = undefined;
+    let apiErrorDetails: any = undefined;
+
+    // Submit valid tools to PluggedinMCP API only if there are valid tools
     if (apiPayload.tools.length > 0) {
       try {
         const response = await axios.post(
           `${apiBaseUrl}/api/tools`,
-          apiPayload, // Send the prepared payload
+          apiPayload,
           {
             headers: {
               "Content-Type": "application/json",
@@ -104,41 +112,54 @@ export async function reportToolsToPluggedinMCP(tools: PluggedinMCPToolReport[])
             },
           }
         );
+        // Assuming response.data.results contains results for successfully processed tools
+        // and potentially errors for individual tool failures within a successful call.
+        // Adjust based on actual API behavior. For now, assume `results` are successes.
+        apiResults = response.data.results || [];
+        // TODO: Handle potential individual errors returned in response.data if the API supports it.
 
-        results = response.data.results || [];
       } catch (error: any) {
-        const errorMessage = error.response?.data?.error || error.message || "Unknown error submitting tools";
-        const errorStatus = error.response?.status;
-        logger.error(`Error submitting tools to API: ${errorMessage}`, { status: errorStatus, details: error.response?.data || error.request || error.message });
-        // Return a consistent error structure
-        return {
-          error: errorMessage,
-          status: errorStatus || 500,
-          details: error.response?.data || error.request || error.message,
-          successCount: 0,
-          failureCount: apiPayload.tools.length, // Use payload length
-          errors: apiPayload.tools.map(t => ({ item: t, error: 'API call failed' })), // Use generic item
-        };
+        // API Call Error Handling
+        apiErrorMessage = error.response?.data?.error || error.message || "Unknown error submitting tools";
+        apiErrorStatus = error.response?.status;
+        apiErrorDetails = error.response?.data || error.request || error.message;
+        logger.error(`Error submitting tools to API: ${apiErrorMessage}`, { status: apiErrorStatus, details: apiErrorDetails });
+        // Mark all attempted tools as failed due to API error
+        apiCallErrors = apiPayload.tools.map(t => ({ item: t, error: `API call failed: ${apiErrorMessage}` }));
       }
+    } else {
+       logger.debug("No valid tools to submit after validation.");
     }
 
-    // Ensure the return type matches ReportResult
+    // Consolidate Results
+    const totalFailures = validationFailures.length + apiCallErrors.length;
+    const totalSuccesses = apiResults.length; // Assuming apiResults only contains successes
+
     return {
-      results: results, // API results if successful
-      errors: errors.map(e => ({ item: e.tool, error: e.error })), // Validation errors
-      success: results.length > 0 && errors.length === 0, // Consider validation errors
-      failureCount: errors.length,
-      successCount: results.length, // Assuming API returns results for successes
+      successCount: totalSuccesses,
+      failureCount: totalFailures,
+      validationErrors: validationFailures,
+      apiErrors: apiCallErrors,
+      results: apiResults,
+      success: totalFailures === 0 && tools.length > 0, // Overall success if no validation or API errors occurred for non-empty input
+      error: apiErrorMessage, // Top-level error from API call if it failed
+      status: apiErrorStatus,
+      details: apiErrorDetails,
+      errors: [] // Clear generic errors if specific ones are populated
     };
+
   } catch (error: any) {
+    // General/Unexpected Error Handling
     logger.error("Unexpected error in reportToolsToPluggedinMCP:", error);
     return {
-      error: "Failed to process tools request",
+      error: "Unexpected error processing tools request",
       details: error.message,
       status: 500,
       successCount: 0,
       failureCount: tools.length, // Assume all failed
-      errors: tools.map(t => ({ item: t, error: 'Unexpected error' })), // Use generic item
+      errors: tools.map(t => ({ item: t, error: `Unexpected error: ${error.message}` })), // Populate generic errors
+      validationErrors: [],
+      apiErrors: []
     };
   }
 }

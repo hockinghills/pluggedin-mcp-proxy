@@ -5,7 +5,8 @@
  * @template T The type of data to be stored in the cache.
  */
 export class Cache<T> {
-  private cache: Map<string, { data: T; timestamp: number }> = new Map();
+  // Store expiresAt timestamp instead of creation timestamp
+  private cache: Map<string, { data: T; expiresAt: number }> = new Map();
   private ttl: number; // Time-to-live in milliseconds
 
   /**
@@ -27,8 +28,8 @@ export class Cache<T> {
       return null; // Not found
     }
 
-    const now = Date.now();
-    if (now - entry.timestamp > this.ttl) {
+    // Check if the current time is past the expiration time
+    if (Date.now() > entry.expiresAt) {
       this.cache.delete(key); // Expired
       return null;
     }
@@ -42,9 +43,11 @@ export class Cache<T> {
    * @param data The data to cache.
    */
   set(key: string, data: T): void {
+    // Calculate expiration time when setting the entry
+    const expiresAt = Date.now() + this.ttl;
     this.cache.set(key, {
       data,
-      timestamp: Date.now()
+      expiresAt: expiresAt
     });
   }
 

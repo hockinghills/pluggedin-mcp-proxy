@@ -6,21 +6,11 @@ export default {
     // Handle module aliases if needed, and map .js extensions
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
-  transform: {
-    // '^.+\\.[tj]sx?$' to process js/ts with `ts-jest`
-    // '^.+\\.m?[tj]sx?$' to process js/ts/mjs/mts with `ts-jest`
-    '^.+\\.m?[tj]sx?$': [
-      'ts-jest',
-      {
-        useESM: true,
-      },
-    ],
-  },
-  extensionsToTreatAsEsm: ['.ts'], // Treat .ts files as ESM
+  // transform and extensionsToTreatAsEsm are often handled by the preset
   // Optional: Specify test file patterns
   // testMatch: ['**/__tests__/**/*.+(ts|tsx|js)', '**/?(*.)+(spec|test).+(ts|tsx|js)'],
   // Optional: Specify directories to ignore
-  // testPathIgnorePatterns: ['/node_modules/', '/dist/'],
+  testPathIgnorePatterns: ['/node_modules/', '/dist/'], // Ignore compiled output
   // Optional: Setup files to run before tests
   // setupFilesAfterEnv: ['./jest.setup.ts'],
 };

@@ -41,6 +41,7 @@ import { reportAllCapabilities } from "./report-tools.js"; // Renamed import
 import { container } from "./di-container.js"; // Import the DI container
 import { Logger } from "./logging.js"; // Import Logger type for casting
 import { pluginRegistry } from "./plugin-system.js"; // Import the plugin registry
+import { zodToJsonSchema } from 'zod-to-json-schema'; // Added import
 import { readFileSync } from 'fs';
 import { createRequire } from 'module';
 import { ToolExecutionResult } from "./types.js"; // Import ToolExecutionResult
@@ -74,30 +75,7 @@ export const createServer = async () => {
     const staticTools: Tool[] = pluginRegistry.getAll().map(plugin => ({
       name: plugin.name,
       description: plugin.description,
-      // Convert Zod schema to a plain JSON schema object for the response
-      // This is a simplified conversion; a more robust one might be needed for complex schemas
-      inputSchema: {
-        type: "object", // Assuming object for simplicity, might need inspection
-        properties: plugin.inputSchema instanceof z.ZodObject
-          ? Object.fromEntries(
-              Object.entries(plugin.inputSchema.shape).map(([key, value]) => [
-                key,
-                {
-                  type: (value as any)._def?.typeName?.replace('Zod', '').toLowerCase() || 'any',
-                  description: (value as any).description || '',
-                  // Add default, enum, etc. if needed by inspecting the Zod schema further
-                },
-              ])
-            )
-          : {},
-        required: plugin.inputSchema instanceof z.ZodObject
-          ? Object.entries(plugin.inputSchema.shape)
-              .filter(([key, value]) => !(value instanceof z.ZodOptional || value instanceof z.ZodDefault))
-              .map(([key]) => key)
-          : [],
-      }
-      // A more robust schema conversion might involve a dedicated library or deeper inspection
-      // inputSchema: zodToJsonSchema(plugin.inputSchema) // Example using a hypothetical library
+      inputSchema: zodToJsonSchema(plugin.inputSchema) as any, // Use library for conversion and cast to any
     }));
     const responsePayload = { tools: staticTools };
     return responsePayload;

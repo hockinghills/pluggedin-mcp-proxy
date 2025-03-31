@@ -162,17 +162,48 @@ export class Logger {
     let loggedToFile = false;
     if (this.logToFile && this.logFilePath) {
       try {
-        // Use appendFileSync for simplicity, consider async for high volume
-        fs.appendFileSync(this.logFilePath, logMessage + '\n');
-        loggedToFile = true;
+        // Use asynchronous appendFile for better performance
+        fs.appendFile(this.logFilePath, logMessage + '\n', (err) => {
+          if (err) {
+            // Log the failure to stderr ONCE to avoid loops if stderr itself fails
+            // Check loggedToFile flag inside the callback to ensure it reflects the attempt status
+            if (!loggedToFile) {
+              process.stderr.write(`[ERROR] Failed to write to log file '${this.logFilePath}': ${err}\n`);
+              // Optionally disable file logging temporarily or permanently after repeated failures
+            }
+            // Ensure loggedToFile remains false if the async write fails
+            loggedToFile = false;
+          } else {
+            // Only set loggedToFile to true if the async write succeeds
+            loggedToFile = true;
+          }
+
+          // Fallback to stderr if file logging is disabled or failed (check *after* async operation)
+          if (!loggedToFile) {
+             process.stderr.write(logMessage + '\n');
+          }
+        });
+        // Note: loggedToFile might not be immediately true here due to async nature.
+        // The fallback logic is moved inside the callback.
       } catch (error) {
-        // Log the failure to stderr ONCE to avoid loops if stderr itself fails
-        if (!loggedToFile) { // Prevent duplicate stderr logs if append fails
-           process.stderr.write(`[ERROR] Failed to write to log file '${this.logFilePath}': ${error}\n`);
-           // Optionally disable file logging temporarily or permanently after repeated failures
-        }
+        // Catch synchronous errors during the setup of appendFile (less likely)
+        process.stderr.write(`[ERROR] Synchronous error setting up log file write for '${this.logFilePath}': ${error}\n`);
+        loggedToFile = false; // Ensure fallback if setup fails
+        // Fallback immediately if synchronous setup fails
+        process.stderr.write(logMessage + '\n');
       }
+    } else {
+      // If file logging is not enabled from the start, log directly to stderr
+      process.stderr.write(logMessage + '\n');
     }
+
+    // IMPORTANT: The original fallback logic outside the 'if (this.logToFile...)' block
+    // is removed because the fallback is now handled within the async callback
+    // or immediately if file logging wasn't enabled/setup failed synchronously.
+    // // Fallback to stderr if file logging is disabled or failed
+    // if (!loggedToFile) {
+    //    process.stderr.write(logMessage + '\n');
+    // }
 
     // Fallback to stderr if file logging is disabled or failed
     if (!loggedToFile) {

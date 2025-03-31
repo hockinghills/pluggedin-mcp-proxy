@@ -74,8 +74,9 @@ describe('Report Tools Module', () => {
 
       const result = await reportToolsToPluggedinMCP(tools as any);
 
+      expect(result.errors).toBeDefined();
       expect(result.errors).toHaveLength(1);
-      expect(result.errors[0].error).toContain('Missing required fields');
+      expect(result.errors?.[0]?.error).toContain('Missing required fields'); // Optional chaining
       expect(result.failureCount).toBe(1);
       expect(result.successCount).toBe(1); // Based on mocked API response
       expect(mockedAxios.post).toHaveBeenCalledWith(
@@ -122,8 +123,9 @@ describe('Report Tools Module', () => {
        expect(result.status).toBe(500);
        expect(result.successCount).toBe(0);
        expect(result.failureCount).toBe(1); // The one valid tool failed due to API error
+       expect(result.errors).toBeDefined();
        expect(result.errors).toHaveLength(1);
-       expect(result.errors[0].error).toBe('API call failed');
+       expect(result.errors?.[0]?.error).toBe('API call failed'); // Optional chaining
        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('Error submitting tools to API'), expect.any(Object));
     });
   });
@@ -179,8 +181,9 @@ describe('Report Tools Module', () => {
        expect(result.error).toBe('Bad Request');
        expect(result.successCount).toBe(0);
        expect(result.failureCount).toBe(1);
+       expect(result.errors).toBeDefined();
        expect(result.errors).toHaveLength(1);
-       expect(result.errors[0].error).toBe('API call failed');
+       expect(result.errors?.[0]?.error).toBe('API call failed'); // Optional chaining
        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('Error reporting resources to PluggedinMCP API'), expect.any(String), expect.any(Object));
     });
   });

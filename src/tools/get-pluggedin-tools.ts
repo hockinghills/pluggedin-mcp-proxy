@@ -17,13 +17,21 @@ import { getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "../utils.js"; 
 // } from "../fetch-capabilities.js"; // No longer needed
 import axios from "axios"; // Import axios
 // import { logger } from "../logging.js"; // No longer needed, get from container
-import { Cache } from "../cache.js"; // Keep Cache type import
+import { Cache } from "../cache.js";
 import { container } from "../di-container.js"; // Import the DI container
 import { Logger } from "../logging.js"; // Import Logger type for casting
 import { ToolPlugin, pluginRegistry } from "../plugin-system.js"; // Import plugin system
 import { ToolExecutionResult } from "../types.js"; // Import execution result type
+// Define the structure for cache entries
+interface ToolsCacheEntry {
+  value: string; // JSON stringified list of tool names
+  expiresAt: number;
+}
 
-const toolName = "get_tools"; 
+// Define TTL constant (1 hour)
+const TOOLS_CACHE_TTL_MS = 3600000;
+
+const toolName = "get_tools";
 const toolDescription = `
 Retrieves the list of currently active and available proxied MCP tools managed by PluggedinMCP.
 Use this tool first to discover which tools (like 'github__create_issue', 'google_calendar__list_events', etc.) are available before attempting to call them with 'tool_call'.
@@ -34,7 +42,8 @@ const GetPluggedinToolsSchema = z.object({});
 
 // Get logger and cache instances from the DI container
 const logger = container.get<Logger>('logger');
-const toolsCache = container.get<Cache<string>>('toolsCache');
+// Update cache type to use the new entry structure
+const toolsCache = container.get<Cache<ToolsCacheEntry>>('toolsCache');
 
 /**
  * Helper function to fetch server names from the pluggedin-app API.
@@ -120,14 +129,18 @@ export class GetPluggedinToolsTool implements ToolPlugin {
     const cacheKey = `tools:${apiKey}`;
 
     // 1. Check cache first
-    // 1. Check cache first
-    const cachedToolNames = toolsCache.get(cacheKey);
-    if (cachedToolNames) {
+    const cachedEntry = toolsCache.get(cacheKey);
+    if (cachedEntry) {
+      // Validate expiration using the logic from the updated Cache class (which already does this)
+      // The Cache.get() method now returns null if expired, so this check is implicitly handled.
       logger.debug("Returning cached tool names.");
       // Return success structure matching ToolExecutionResult
       return {
-        content: [{ type: "text", text: cachedToolNames }],
+        content: [{ type: "text", text: cachedEntry.value }], // Return the value from the entry
       };
+      // Note: The explicit Date.now() < cachedEntry.expiresAt check is redundant
+      // because the updated Cache.get() handles expiration internally.
+      // Keeping the logic simple here.
     }
 
     logger.debug("Tools not found in cache, fetching from API...");
@@ -174,9 +187,16 @@ export class GetPluggedinToolsTool implements ToolPlugin {
       // Return the stringified list of prefixed tool names
       const resultString = JSON.stringify(toolNames, null, 2);
 
-      // 3. Store the fetched result in the cache
+      // 3. Store the fetched result in the cache using the CacheEntry structure
       logger.debug(`Caching ${toolNames.length} tool names.`);
-      toolsCache.set(cacheKey, resultString);
+      // Pass the full ToolsCacheEntry object. The Cache.set method will use its internal
+      // logic to calculate the actual expiresAt for storage based on the TTL,
+      // but TypeScript requires the object structure to match. We provide a placeholder.
+      toolsCache.set(cacheKey, {
+        value: resultString,
+        expiresAt: 0 // Placeholder, Cache.set calculates the real one internally
+      });
+
 
       // Return success structure matching ToolExecutionResult
       return {
