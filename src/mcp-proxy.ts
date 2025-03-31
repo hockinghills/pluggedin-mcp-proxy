@@ -1,4 +1,4 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js"; // Removed non-exported ServerResult
 import {
   CallToolRequestSchema,
   GetPromptRequestSchema,
@@ -30,11 +30,20 @@ import {
   getProfileCapabilities,
   ProfileCapability,
 } from "./fetch-capabilities.js";
-import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js";
-import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js";
+// Import tool plugins (ensure they are loaded to register themselves)
+import "./tools/get-pluggedin-tools.js";
+import "./tools/call-pluggedin-tool.js";
+import "./tools/refresh-tools.js";
+// import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js"; // No longer needed directly
+// import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js"; // No longer needed directly
 import { reportAllCapabilities } from "./report-tools.js"; // Renamed import
+// import { logger } from "./logging.js"; // No longer needed, get from container
+import { container } from "./di-container.js"; // Import the DI container
+import { Logger } from "./logging.js"; // Import Logger type for casting
+import { pluginRegistry } from "./plugin-system.js"; // Import the plugin registry
 import { readFileSync } from 'fs';
 import { createRequire } from 'module';
+import { ToolExecutionResult } from "./types.js"; // Import ToolExecutionResult
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
@@ -42,20 +51,8 @@ const packageJson = require('../package.json');
 const promptToClient: Record<string, ConnectedClient> = {};
 const resourceToClient: Record<string, ConnectedClient> = {};
 
-// Helper function for conditional debug logging to stderr
-const debugLog = (...args: any[]) => {
-  // No-op: All logging removed to prevent stdio interference
-  // if (isDebugEnabled()) {
-  //   process.stderr.write(`[DEBUG] ${args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ')}\n`);
-  // }
-};
-
-// Helper function for error logging to stderr
-const errorLog = (...args: any[]) => {
-   // No-op: All logging removed to prevent stdio interference
-   // process.stderr.write(`[ERROR] ${args.map(arg => arg instanceof Error ? arg.stack : String(arg)).join(' ')}\n`);
-};
-
+// Get logger instance from the DI container
+const logger = container.get<Logger>('logger');
 
 export const createServer = async () => {
   const server = new Server(
@@ -72,29 +69,133 @@ export const createServer = async () => {
     }
   );
 
-  // List Tools Handler
+  // List Tools Handler - Dynamically lists registered static tool plugins
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
-    const staticTools: Tool[] = [
-      {
-        name: GetPluggedinToolsTool.toolName,
-        description: GetPluggedinToolsTool.description,
-        inputSchema: { type: "object" }, // Simplified
-      },
-      {
-        name: CallPluggedinToolTool.toolName,
-        description: CallPluggedinToolTool.description,
-        inputSchema: {
-          type: "object",
-          properties: {
-            tool_name: { 
+    const staticTools: Tool[] = pluginRegistry.getAll().map(plugin => ({
+      name: plugin.name,
+      description: plugin.description,
+      // Convert Zod schema to a plain JSON schema object for the response
+      // This is a simplified conversion; a more robust one might be needed for complex schemas
+      inputSchema: {
+        type: "object", // Assuming object for simplicity, might need inspection
+        properties: plugin.inputSchema instanceof z.ZodObject
+          ? Object.fromEntries(
+              Object.entries(plugin.inputSchema.shape).map(([key, value]) => [
+                key,
+                {
+                  type: (value as any)._def?.typeName?.replace('Zod', '').toLowerCase() || 'any',
+                  description: (value as any).description || '',
+                  // Add default, enum, etc. if needed by inspecting the Zod schema further
+                },
+              ])
+            )
+          : {},
+        required: plugin.inputSchema instanceof z.ZodObject
+          ? Object.entries(plugin.inputSchema.shape)
+              .filter(([key, value]) => !(value instanceof z.ZodOptional || value instanceof z.ZodDefault))
+              .map(([key]) => key)
+          : [],
+      }
+      // A more robust schema conversion might involve a dedicated library or deeper inspection
+      // inputSchema: zodToJsonSchema(plugin.inputSchema) // Example using a hypothetical library
+    }));
+    const responsePayload = { tools: staticTools };
+    return responsePayload;
+  });
+
+  // Call Tool Handler - Uses the plugin registry to find and execute the tool
+  server.setRequestHandler(CallToolRequestSchema, async (request): Promise<any> => { // Use Promise<any>
+    const { name, arguments: args } = request.params;
+    const meta = request.params._meta;
+
+    // Find the plugin by name
+    const plugin = pluginRegistry.get(name);
+
+    if (!plugin) {
+      logger.error(`Unknown static tool requested: ${name}`);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error: Unknown tool name: ${name}` }],
+      } as any; // Cast error response to any
+    }
+
+    try {
+      // Validate arguments using the plugin's Zod schema
+      const validatedArgs = plugin.inputSchema.parse(args);
+
+      // Execute the plugin and cast the result to any
+      return await plugin.execute(validatedArgs, meta) as any; // Cast result to any
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Error executing static tool ${name}:`, errorMessage, error);
+
+      let errorDetail = errorMessage;
+      if (error instanceof z.ZodError) {
+        // Format Zod errors nicely
+        errorDetail = `Invalid arguments for tool ${name}: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
+      }
+
+      return {
+        isError: true,
+        content: [{ type: "text", text: errorDetail || "An unknown error occurred during tool execution" }],
+      } as any; // Cast error response to any
+    }
+  });
+
+  /* // Old Call Tool Handler - Correctly commented out
+  /*
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    const meta = request.params._meta;
+    try {
+      if (name === GetPluggedinToolsTool.toolName) {
+        const toolListString = await GetPluggedinToolsTool.execute(meta);
+        return {
+          content: [
+            { type: "text", text: toolListString },
+          ],
+        };
+      } else if (name === CallPluggedinToolTool.toolName) {
+        const validatedArgs = CallPluggedinToolTool.inputSchema.parse(args);
+        return await CallPluggedinToolTool.execute(validatedArgs, meta);
+      } else if (name === "refresh_tools") {
+        // Invalidate the cache immediately
+        GetPluggedinToolsTool.invalidateCache();
+        // Execute the live discovery and reporting process in the background
+        // This is intentionally async and doesn't wait for completion
+        // to avoid blocking the MCP client for a potentially long operation.
+        reportAllCapabilities().catch((err: any) => { // Use renamed function and type err
+          // Log errors from the background refresh process
+          logger.error("Error during background capability refresh:", err);
+        });
+        // Return immediately with a success message
+        return {
+          content: [
+            { type: "text", text: "Capability refresh process initiated in the background." }, // Updated message
+          ],
+        };
+      } else {
+        logger.error(`Unknown static tool requested: ${name}`);
+        throw new Error(
+          `Unknown tool: ${name}. Use 'get_tools' to list available tools, 'tool_call' to execute them, or 'refresh_tools' to update the list.`
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Error executing static tool ${name}:`, errorMessage, error);
+
+      let errorDetail = errorMessage;
+      if (error instanceof z.ZodError) {
+            tool_name: {
               type: "string",
               description: "The prefixed name of the proxied tool to call (e.g., 'github__create_issue', 'google_calendar__list_events'). Get this from 'get_tools'."
             },
-            arguments: { 
-              type: "object", 
-              additionalProperties: true, 
+            arguments: {
+              type: "object",
+              additionalProperties: true,
               description: "The arguments object required by the specific proxied tool being called.",
-              default: {} 
+              default: {}
             }
             },
             required: ["tool_name"]
@@ -117,22 +218,24 @@ export const createServer = async () => {
     const meta = request.params._meta;
     try {
       if (name === GetPluggedinToolsTool.toolName) {
-        const toolListString = await GetPluggedinToolsTool.execute(meta); 
+        const toolListString = await GetPluggedinToolsTool.execute(meta);
         return {
           content: [
-            { type: "text", text: toolListString }, 
+            { type: "text", text: toolListString },
           ],
         };
       } else if (name === CallPluggedinToolTool.toolName) {
         const validatedArgs = CallPluggedinToolTool.inputSchema.parse(args);
         return await CallPluggedinToolTool.execute(validatedArgs, meta);
       } else if (name === "refresh_tools") {
-        // Execute the live discovery and reporting process
+        // Invalidate the cache immediately
+        GetPluggedinToolsTool.invalidateCache();
+        // Execute the live discovery and reporting process in the background
         // This is intentionally async and doesn't wait for completion
         // to avoid blocking the MCP client for a potentially long operation.
         reportAllCapabilities().catch((err: any) => { // Use renamed function and type err
-          // Log errors from the background refresh process to stderr
-          console.error("Error during background capability refresh:", err); 
+          // Log errors from the background refresh process
+          logger.error("Error during background capability refresh:", err);
         });
         // Return immediately with a success message
         return {
@@ -141,26 +244,27 @@ export const createServer = async () => {
           ],
         };
       } else {
-        // errorLog(`Unknown static tool requested: ${name}`); // Removed log
+        logger.error(`Unknown static tool requested: ${name}`);
         throw new Error(
           `Unknown tool: ${name}. Use 'get_tools' to list available tools, 'tool_call' to execute them, or 'refresh_tools' to update the list.`
         );
       }
-    } catch (error) { 
+    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      // errorLog(`Error executing static tool ${name}:`, errorMessage, error); // Removed log
+      logger.error(`Error executing static tool ${name}:`, errorMessage, error);
 
       let errorDetail = errorMessage;
       if (error instanceof z.ZodError) {
         errorDetail = `Invalid arguments for tool_call: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
       }
-      
+
       return {
         isError: true,
         content: [{ type: "text", text: errorDetail || "An unknown error occurred during tool execution" }],
       };
     }
   });
+  */ // End of old handler comment
 
   // Get Prompt Handler
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
@@ -174,19 +278,19 @@ export const createServer = async () => {
         GetPromptResultSchema
       );
     } catch (error) {
-      // errorLog(`Error getting prompt through ${clientForPrompt.client.getServerVersion()?.name}:`, error); // Removed log
+      logger.error(`Error getting prompt through ${clientForPrompt.client.getServerVersion()?.name}:`, error);
       throw error; // Re-throw for SDK to handle
     }
   });
 
   // List Prompts Handler
   server.setRequestHandler(ListPromptsRequestSchema, async (request) => {
-    try { 
+    try {
       const serverParams = await getMcpServers(true);
       const allPrompts: z.infer<typeof ListPromptsResultSchema>["prompts"] = [];
       await Promise.allSettled(
         Object.entries(serverParams).map(async ([uuid, params]) => {
-          try { 
+          try {
             const sessionKey = getSessionKey(uuid, params);
             const session = await getSession(sessionKey, uuid, params);
             if (!session || !session.client.getServerCapabilities()?.prompts) return;
@@ -199,33 +303,33 @@ export const createServer = async () => {
                 allPrompts.push({ ...prompt, name: promptName, description: `[${serverName}] ${prompt.description || ""}` });
               });
             }
-          } catch (error) { 
-            // debugLog(`[ListPrompts Error] Server: ${params.name || uuid} - ${error instanceof Error ? error.message : String(error)}`); // Removed log
+          } catch (error) {
+            logger.debug(`[ListPrompts Error] Server: ${params.name || uuid} - ${error instanceof Error ? error.message : String(error)}`);
           }
         })
       );
       return { prompts: allPrompts, nextCursor: request.params?.cursor };
     } catch (handlerError) {
-       // errorLog("[ListPrompts Handler Error]", handlerError); // Removed log
-       return { 
-         error: "Failed to list prompts due to an internal error.", 
+       logger.error("[ListPrompts Handler Error]", handlerError);
+       return {
+         error: "Failed to list prompts due to an internal error.",
          details: handlerError instanceof Error ? handlerError.message : String(handlerError),
-         prompts: [] 
-       }; 
+         prompts: []
+       };
     }
   });
 
   // List Resources Handler
   server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
     try {
-      console.error("[DEBUG] ListResourcesRequestSchema handler called - Fetching cached resources"); // Updated debug log
+      logger.debug("ListResourcesRequestSchema handler called - Fetching cached resources");
 
       const apiKey = getPluggedinMCPApiKey();
       const apiBaseUrl = getPluggedinMCPApiBaseUrl();
       let allResources: z.infer<typeof ListResourcesResultSchema>["resources"] = [];
 
       if (!apiKey || !apiBaseUrl) {
-        console.error("API key or base URL not set, cannot fetch resources.");
+        logger.warn("API key or base URL not set, cannot fetch non-tool resources.");
         // Still return tool resources if possible
         allResources = await getToolsAsResources();
         return { resources: allResources, nextCursor: request.params?.cursor };
@@ -233,7 +337,7 @@ export const createServer = async () => {
 
       // Get tool-based resources (already cached or fetched from /api/tools)
       const toolResources = await getToolsAsResources();
-      console.error(`[DEBUG] Found ${toolResources.length} tool resources`);
+      logger.debug(`Found ${toolResources.length} tool resources`);
       allResources = [...toolResources];
 
       // Fetch cached non-tool resources from the new API endpoint
@@ -254,7 +358,7 @@ export const createServer = async () => {
             serverName?: string; // Expect serverName from API
           }> = response.data.results;
 
-          console.error(`[DEBUG] Found ${cachedResourcesFromApi.length} cached non-tool resources from API`);
+          logger.debug(`Found ${cachedResourcesFromApi.length} cached non-tool resources from API`);
 
           // Map API response to MCP Resource format and add prefix
           const mappedCachedResources = cachedResourcesFromApi.map(res => ({
@@ -268,11 +372,11 @@ export const createServer = async () => {
           allResources = [...toolResources, ...mappedCachedResources];
 
         } else {
-          console.error("Invalid response structure received from /api/resources:", response.data);
+          logger.warn("Invalid response structure received from /api/resources:", response.data);
           // Proceed with only tool resources if API call fails
         }
       } catch (apiError) {
-        console.error("Error fetching cached resources from /api/resources:", apiError);
+        logger.error("Error fetching cached resources from /api/resources:", apiError);
         // Proceed with only tool resources if API call fails
       }
 
@@ -289,23 +393,23 @@ export const createServer = async () => {
       });
 
 
-      console.error(`[DEBUG] Returning ${allResources.length} total resources (tools + cached)`);
+      logger.debug(`Returning ${allResources.length} total resources (tools + cached)`);
       return { resources: allResources, nextCursor: request.params?.cursor }; // Assuming no pagination from cache for now
 
     } catch (handlerError) {
-       console.error("[DEBUG] Error in ListResourcesRequestSchema handler:", handlerError);
-       return { 
+       logger.error("[ListResources Handler Error]", handlerError);
+       return {
          error: "Failed to list resources due to an internal error.",
          details: handlerError instanceof Error ? handlerError.message : String(handlerError),
-         resources: [] 
-       }; 
+         resources: []
+       };
     }
   });
 
   // Read Resource Handler
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
-    
+
     // Check if this is a tool resource (using corrected 'mcp://tools/' prefix from Step 6)
     if (uri.startsWith('mcp://tools/')) {
       try {
@@ -315,15 +419,15 @@ export const createServer = async () => {
           throw new Error(`Invalid tool resource URI format: ${uri}`);
         }
         const [serverUuid, toolName] = parts; // Correct parsing
-        
+
         // Fetch the tool details from the database via pluggedin-app API
         const apiKey = getPluggedinMCPApiKey();
         const apiBaseUrl = getPluggedinMCPApiBaseUrl();
-        
+
         if (!apiKey || !apiBaseUrl) {
           throw new Error("API key or base URL not set, cannot fetch tool details");
         }
-        
+
         // Fetch the specific tool
         const response = await axios.get(
           `${apiBaseUrl}/api/tools/${serverUuid}/${toolName}`, // Assumes this endpoint exists (Step 4)
@@ -333,11 +437,11 @@ export const createServer = async () => {
             },
           }
         );
-        
+
         if (!response.data || !response.data.tool) {
           throw new Error(`Tool not found for URI: ${uri}`);
         }
-        
+
         // Return the tool details as resource content
         // Note: ReadResourceResultSchema expects an object with 'contents' array
         // We need to adapt the response format or adjust the expectation.
@@ -352,35 +456,35 @@ export const createServer = async () => {
         };
 
       } catch (error) {
-        // errorLog(`Error reading tool resource: ${uri}`, error); // Removed log
+        logger.error(`Error reading tool resource: ${uri}`, error);
         // Re-throw a more specific error if possible, or the original error
         throw new Error(`Failed to read tool resource ${uri}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    
+
     // Handle regular resources with existing code
     const clientForResource = resourceToClient[uri];
     if (!clientForResource) throw new Error(`Unknown resource: ${uri}`);
     try {
       // Ensure the proxied request uses the original URI
       return await clientForResource.client.request(
-        { method: "resources/read", params: { uri, _meta: request.params._meta } }, 
+        { method: "resources/read", params: { uri, _meta: request.params._meta } },
         ReadResourceResultSchema
       );
     } catch (error) {
-      // errorLog(`Error reading resource through ${clientForResource.client.getServerVersion()?.name}:`, error); // Removed log
+      logger.error(`Error reading resource through ${clientForResource.client.getServerVersion()?.name}:`, error);
       throw error; // Re-throw for SDK
     }
   });
 
   // List Resource Templates Handler
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request) => {
-     try { 
+     try {
       const serverParams = await getMcpServers(true);
       const allTemplates: ResourceTemplate[] = [];
       await Promise.allSettled(
         Object.entries(serverParams).map(async ([uuid, params]) => {
-           try { 
+           try {
             const sessionKey = getSessionKey(uuid, params);
             const session = await getSession(sessionKey, uuid, params);
             if (!session || !session.client.getServerCapabilities()?.resources) return;
@@ -391,19 +495,19 @@ export const createServer = async () => {
                 allTemplates.push({ ...template, name: `[${serverName}] ${template.name || ""}` });
               });
             }
-          } catch (error) { 
-             // debugLog(`Error fetching resource templates from server ${params.name || uuid}:`, error instanceof Error ? error.message : String(error)); // Removed log
+          } catch (error) {
+             logger.debug(`Error fetching resource templates from server ${params.name || uuid}:`, error instanceof Error ? error.message : String(error));
           }
         })
       );
       return { resourceTemplates: allTemplates, nextCursor: request.params?.cursor };
      } catch (handlerError) {
-        // errorLog("[ListResourceTemplates Handler Error]", handlerError); // Removed log
-        return { 
-          error: "Failed to list resource templates due to an internal error.", 
+        logger.error("[ListResourceTemplates Handler Error]", handlerError);
+        return {
+          error: "Failed to list resource templates due to an internal error.",
           details: handlerError instanceof Error ? handlerError.message : String(handlerError),
-          resourceTemplates: [] 
-        }; 
+          resourceTemplates: []
+        };
      }
   });
 

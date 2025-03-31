@@ -1,4 +1,5 @@
-import { getMcpServers, ServerParameters } from "./fetch-pluggedinmcp.js";
+import { getMcpServers } from "./fetch-pluggedinmcp.js";
+import { ServerParameters } from "./types.js"; // Corrected import path
 import {
   ConnectedClient,
   createPluggedinMCPClient,

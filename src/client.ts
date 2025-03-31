@@ -5,7 +5,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { ServerParameters } from "./fetch-pluggedinmcp.js";
+import { ServerParameters } from "./types.js"; // Corrected import path
 import { createRequire } from 'module'; // Import createRequire for JSON
 
 const require = createRequire(import.meta.url);

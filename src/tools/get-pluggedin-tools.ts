@@ -16,6 +16,12 @@ import { getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "../utils.js"; 
 //   ProfileCapability,
 // } from "../fetch-capabilities.js"; // No longer needed
 import axios from "axios"; // Import axios
+// import { logger } from "../logging.js"; // No longer needed, get from container
+import { Cache } from "../cache.js"; // Keep Cache type import
+import { container } from "../di-container.js"; // Import the DI container
+import { Logger } from "../logging.js"; // Import Logger type for casting
+import { ToolPlugin, pluginRegistry } from "../plugin-system.js"; // Import plugin system
+import { ToolExecutionResult } from "../types.js"; // Import execution result type
 
 const toolName = "get_tools"; 
 const toolDescription = `
@@ -26,26 +32,64 @@ Requires a valid PluggedinMCP API key configured in the environment.
 
 const GetPluggedinToolsSchema = z.object({});
 
-export class GetPluggedinToolsTool {
-  static toolName = toolName;
-  static description = toolDescription;
-  static inputSchema = GetPluggedinToolsSchema;
+// Get logger and cache instances from the DI container
+const logger = container.get<Logger>('logger');
+// const logger = container.get<Logger>('logger'); // Removed duplicate
+const toolsCache = container.get<Cache<string>>('toolsCache');
+
+export class GetPluggedinToolsTool implements ToolPlugin {
+  readonly name = toolName; // Use readonly instance property
+  readonly description = toolDescription; // Use readonly instance property
+  readonly inputSchema = GetPluggedinToolsSchema; // Use readonly instance property
+
+  // Method to invalidate the cache (will be called by refresh_tools)
+  static invalidateCache(): void {
+    const apiKey = getPluggedinMCPApiKey();
+    if (apiKey) {
+      const cacheKey = `tools:${apiKey}`;
+      logger.info(`Invalidating tools cache for key: ${cacheKey}`);
+      toolsCache.invalidate(cacheKey);
+    } else {
+       logger.warn("Cannot invalidate tools cache: API key is missing.");
+    }
+  }
 
   // This method fetches the cached tool list from the pluggedin-app API
-  static async execute(
-    requestMeta: any // requestMeta might not be needed anymore, but kept for signature consistency
-  ): Promise<string> { // Return type is string (JSON array of names)
+  // Updated to match ToolPlugin interface
+  async execute(
+    args: z.infer<typeof GetPluggedinToolsSchema>, // Use validated args (empty object)
+    meta?: any // Optional meta
+  ): Promise<ToolExecutionResult> { // Return type matches ToolPlugin interface
 
     const apiKey = getPluggedinMCPApiKey();
     const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
     if (!apiKey || !apiBaseUrl) {
-      console.error("PLUGGEDIN_API_KEY or PLUGGEDIN_API_BASE_URL is missing for get_tools.");
-      return "[]"; // Return empty JSON array string on configuration error
+      logger.error("PLUGGEDIN_API_KEY or PLUGGEDIN_API_BASE_URL is missing for get_tools.");
+      // Return error structure matching ToolExecutionResult
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Configuration Error: Missing API Key or Base URL." }],
+      };
     }
 
+    const cacheKey = `tools:${apiKey}`;
+
+    // 1. Check cache first
+    // 1. Check cache first
+    const cachedToolNames = toolsCache.get(cacheKey);
+    if (cachedToolNames) {
+      logger.debug("Returning cached tool names.");
+      // Return success structure matching ToolExecutionResult
+      return {
+        content: [{ type: "text", text: cachedToolNames }],
+      };
+    }
+
+    logger.debug("Tools not found in cache, fetching from API...");
+
     try {
-      // Fetch the cached tools from the pluggedin-app API
+      // 2. Fetch tools from API if not cached
       const response = await axios.get(
         `${apiBaseUrl}/api/tools`, // Endpoint that returns all tools for the profile
         {
@@ -57,8 +101,12 @@ export class GetPluggedinToolsTool {
 
       // Check if the response structure is as expected
       if (!response.data || !Array.isArray(response.data.results)) {
-        console.error("Invalid response structure received from /api/tools:", response.data);
-        return "[]";
+        logger.error("Invalid response structure received from /api/tools:", response.data);
+        // Return error structure matching ToolExecutionResult
+        return {
+          isError: true,
+          content: [{ type: "text", text: "Error: Invalid response from API." }],
+        };
       }
 
       // The API returns tool objects, we need to extract the names
@@ -78,15 +126,15 @@ export class GetPluggedinToolsTool {
            Object.entries(serversResponse.data).forEach(([uuid, serverData]: [string, any]) => {
              if (serverData && serverData.name) {
                serverNames[uuid] = serverData.name;
-             }
-           });
-        } else {
-           console.error("Invalid response structure from /api/mcp-servers");
-        }
-      } catch (serverFetchError) {
-         console.error("Error fetching server names for prefixing:", serverFetchError);
-         // Proceed without prefixing if server names cannot be fetched
-      }
+              }
+            });
+         } else {
+            logger.warn("Invalid response structure from /api/mcp-servers");
+         }
+       } catch (serverFetchError) {
+          logger.error("Error fetching server names for prefixing:", serverFetchError);
+          // Proceed without prefixing if server names cannot be fetched
+       }
       // --- END TEMPORARY WORKAROUND ---
 
 
@@ -102,12 +150,28 @@ export class GetPluggedinToolsTool {
       });
 
       // Return the stringified list of prefixed tool names
-      return JSON.stringify(toolNames, null, 2);
+      const resultString = JSON.stringify(toolNames, null, 2);
+
+      // 3. Store the fetched result in the cache
+      logger.debug(`Caching ${toolNames.length} tool names.`);
+      toolsCache.set(cacheKey, resultString);
+
+      // Return success structure matching ToolExecutionResult
+      return {
+        content: [{ type: "text", text: resultString }],
+      };
 
     } catch (error) {
-      console.error("Error fetching cached tools via /api/tools:", error);
-      // Return empty JSON array string on API error
-      return "[]";
+      logger.error("Error fetching tools via /api/tools:", error);
+      // Return error structure matching ToolExecutionResult
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `API Error: ${errorMessage}` }],
+      };
     }
   }
 }
+
+// Register the plugin instance with the registry
+pluginRegistry.register(new GetPluggedinToolsTool());
