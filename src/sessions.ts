@@ -1,12 +1,18 @@
-import { getMcpServers, ServerParameters } from "./fetch-pluggedinmcp.js";
+import { getMcpServers } from "./fetch-pluggedinmcp.js";
+import { ServerParameters } from "./types.js"; // Corrected import path
 import {
   ConnectedClient,
   createPluggedinMCPClient,
   connectPluggedinMCPClient,
 } from "./client.js";
 import { getSessionKey } from "./utils.js";
+import { container } from './di-container.js'; // Import container
+import { Logger } from './logging.js'; // Import Logger type
 
 const _sessions: Record<string, ConnectedClient> = {};
+
+// Get logger instance
+const logger = container.get<Logger>('logger');
 
 export const getSession = async (
   sessionKey: string,
@@ -52,7 +58,10 @@ export const initSessions = async (): Promise<void> => {
       const sessionKey = getSessionKey(uuid, params);
       try {
         await getSession(sessionKey, uuid, params);
-      } catch (error) {}
+      } catch (error) {
+        // Log errors during initial session establishment attempt
+        logger.error(`Failed to initialize session for ${params.name || uuid} during initSessions:`, error);
+      }
     })
   );
 };

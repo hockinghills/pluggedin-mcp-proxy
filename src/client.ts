@@ -5,11 +5,16 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { ServerParameters } from "./fetch-pluggedinmcp.js";
-import { createRequire } from 'module'; // Import createRequire for JSON
+import { ServerParameters } from "./types.js";
+import { createRequire } from 'module';
+import { container } from './di-container.js'; // Import container
+import { Logger } from './logging.js'; // Import Logger type
 
-const require = createRequire(import.meta.url);
-const packageJson = require('../package.json'); // Read package.json relative to current file
+const customRequire = createRequire(import.meta.url);
+const packageJson = customRequire('../package.json');
+
+// Get logger instance
+const logger = container.get<Logger>('logger');
 
 const sleep = (time: number) =>
   new Promise<void>((resolve) => setTimeout(() => resolve(), time));
@@ -37,7 +42,7 @@ export const createPluggedinMCPClient = (
   } else if (serverParams.type === "SSE" && serverParams.url) {
     transport = new SSEClientTransport(new URL(serverParams.url));
   } else {
-    console.error(`Unsupported server type: ${serverParams.type}`);
+    logger.error(`Unsupported server type: ${serverParams.type} for server ${serverParams.name} (${serverParams.uuid})`);
     return { client: undefined, transport: undefined };
   }
 

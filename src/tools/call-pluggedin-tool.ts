@@ -13,7 +13,12 @@ import {
   getProfileCapabilities,
   ProfileCapability,
 } from "../fetch-capabilities.js";
-import { getInactiveTools, ToolParameters } from "../fetch-tools.js";
+import { getInactiveTools, ToolParameters } from "../fetch-tools.js"; // Keep for inactive check
+import { container } from "../di-container.js";
+import { Logger } from "../logging.js";
+import { ToolPlugin, pluginRegistry } from "../plugin-system.js";
+import { ToolExecutionResult } from "../types.js";
+import { getSessionKeyForTool } from '../tool-registry.js'; // Import the registry query function
 
 const toolName = "tool_call"; // Renamed to match veyrax-mcp convention
 const toolDescription = `
@@ -38,94 +43,89 @@ const CallPluggedinToolSchema = z.object({
     ),
 });
 
-export class CallPluggedinToolTool {
-  static toolName = toolName;
-  static description = toolDescription;
-  static inputSchema = CallPluggedinToolSchema;
+// Get logger instance from the DI container
+const logger = container.get<Logger>('logger');
 
-  // Helper function to find the client session for a given prefixed tool name
-  // Note: This involves re-fetching servers and tools on each call, which might be inefficient.
-  // Consider caching or a shared mapping for optimization if performance becomes an issue.
+/**
+ * ToolPlugin implementation for the 'tool_call' static tool.
+ * Proxies a tool call to the appropriate downstream MCP server based on the prefixed tool name.
+ */
+export class CallPluggedinToolTool implements ToolPlugin {
+  readonly name = toolName;
+  readonly description = toolDescription;
+  readonly inputSchema = CallPluggedinToolSchema;
+
+  /**
+   * Finds the active downstream client session responsible for handling the specified prefixed tool name.
+   * Uses the toolOriginMap populated by the capability reporting process.
+   * @param prefixedToolName - The tool name including the server prefix (e.g., 'github__create_issue').
+   * @returns A promise resolving to the ConnectedClient instance or null if not found.
+   * @private
+   */
   private static async findClientForTool(
-    prefixedToolName: string,
-    requestMeta: any
+    prefixedToolName: string
   ): Promise<ConnectedClient | null> {
-    // Check for API key before trying to fetch servers
-    const apiKey = getPluggedinMCPApiKey();
-    if (!apiKey) {
-      console.error("PLUGGEDIN_API_KEY is missing. Cannot find client for tool.");
-      // Return null, the execute method will handle the error response
+    logger.debug(`Finding client for tool: ${prefixedToolName}`);
+    const sessionKey = getSessionKeyForTool(prefixedToolName);
+
+    if (!sessionKey) {
+      logger.warn(`No origin session key found in registry for tool: ${prefixedToolName}. Cache might be stale. Trigger refresh_tools.`);
       return null;
     }
 
-    const serverParams = await getMcpServers(true); // Force refresh now that we know key exists
-    const profileCapabilities = await getProfileCapabilities(true);
-    let inactiveTools: Record<string, ToolParameters> = {};
-    if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
-      inactiveTools = await getInactiveTools(true);
+    // Attempt to get the session using the key from the map
+    // We don't need uuid/params here as getSession should retrieve by key if it exists
+    // Note: This assumes the session corresponding to sessionKey is still active in the _sessions map in sessions.ts
+    // If sessions can expire independently, this might need adjustment.
+    const session = await getSession(sessionKey, '', {} as any); // Pass dummy uuid/params as they are not used for lookup by key
+
+    if (!session) {
+       logger.warn(`Session not found for key "${sessionKey}" associated with tool "${prefixedToolName}". Cache might be stale.`);
+       return null;
     }
 
-    for (const [uuid, params] of Object.entries(serverParams)) {
-      const sessionKey = getSessionKey(uuid, params);
-      const session = await getSession(sessionKey, uuid, params);
-      if (!session) continue;
+    // Optional: Add back the inactive check if needed, though ideally the registry
+    // should only contain active tools if populated correctly.
+    // const profileCapabilities = await getProfileCapabilities();
+    // if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
+    //    const inactiveTools = await getInactiveTools();
+    //    // Need to extract original tool name and uuid from sessionKey or map to check inactivity
+    //    // This adds complexity back, suggesting the registry should ideally handle active state.
+    // }
 
-      const capabilities = session.client.getServerCapabilities();
-      if (!capabilities?.tools) continue;
-
-      const serverName = session.client.getServerVersion()?.name || "";
-      try {
-        const result = await session.client.request(
-          { method: "tools/list", params: { _meta: requestMeta } },
-          ListToolsResultSchema
-        );
-
-        const foundTool = result.tools?.find((tool) => {
-          const currentPrefixedName = `${sanitizeName(serverName)}__${
-            tool.name
-          }`;
-          // Check if it matches the requested name AND is not inactive
-          const isInactive =
-            profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT) &&
-            inactiveTools[`${uuid}:${tool.name}`];
-          return currentPrefixedName === prefixedToolName && !isInactive;
-        });
-
-        if (foundTool) {
-          return session; // Return the session (ConnectedClient) if the tool is found and active
-        }
-      } catch (error) {
-        // Ignore errors fetching from individual servers during mapping
-        console.error(
-          `Error fetching tools from ${serverName} while mapping for call:`,
-          error
-        );
-      }
-    }
-    return null; // Tool not found or associated client session couldn't be established
+    logger.debug(`Found session key "${sessionKey}" for tool "${prefixedToolName}"`);
+    return session;
   }
 
-  // This method will be called by the MCP server when the tool is invoked
-  static async execute(
+  /**
+   * Executes the 'tool_call' logic.
+   * Finds the correct downstream server based on the prefixed tool name,
+   * extracts the original tool name, and proxies the 'tools/call' request.
+   * @param args - Validated input arguments containing 'tool_name' and 'arguments'.
+   * @param meta - Optional request metadata containing progress tokens etc.
+   * @returns A promise resolving to the ToolExecutionResult from the downstream server.
+   */
+  async execute(
     args: z.infer<typeof CallPluggedinToolSchema>,
-    requestMeta: any // Contains metadata like progress tokens
-  ): Promise<z.infer<typeof CompatibilityCallToolResultSchema>> {
+    meta?: any
+  ): Promise<ToolExecutionResult> {
     const { tool_name: prefixedToolName, arguments: toolArgs } = args;
 
+    // Use the optimized findClientForTool which no longer needs meta for lookup
     const clientForTool = await CallPluggedinToolTool.findClientForTool(
-      prefixedToolName,
-      requestMeta
+      prefixedToolName
     );
 
     if (!clientForTool) {
       // Check if the reason was a missing API key (findClientForTool returns null in that case)
       const apiKey = getPluggedinMCPApiKey();
       if (!apiKey) {
-         return {
-           isError: true,
-           content: [{ type: "text", text: "Configuration Error: PluggedinMCP API Key is missing. Please configure the server." }],
-         };
-      }
+       // Return error structure matching ToolExecutionResult
+       return {
+         isError: true,
+         content: [{ type: "text", text: "Configuration Error: PluggedinMCP API Key is missing. Please configure the server." }],
+       };
+     }
 
       // Otherwise, the tool was genuinely not found or inactive
       const profileCapabilities = await getProfileCapabilities();
@@ -141,9 +141,14 @@ export class CallPluggedinToolTool {
            if (originalToolName && inactiveTools[`${uuid}:${originalToolName}`]) {
              throw new Error(`Tool is inactive: ${prefixedToolName}`);
            }
-        }
-      }
-      throw new Error(`Unknown or inactive tool: ${prefixedToolName}`);
+         }
+       }
+       // Return error structure matching ToolExecutionResult
+       // Updated error message to reflect potential cache staleness
+       return {
+         isError: true,
+         content: [{ type: "text", text: `Error: Tool not found or origin unknown: ${prefixedToolName}. Try running 'refresh_tools'.` }],
+       };
     }
 
     // Extract the original tool name
@@ -153,13 +158,15 @@ export class CallPluggedinToolTool {
     );
 
     if (!originalToolName) {
-      throw new Error(
-        `Could not extract original tool name from prefixed name: ${prefixedToolName}`
-      );
+       // Return error structure matching ToolExecutionResult
+       return {
+         isError: true,
+         content: [{ type: "text", text: `Error: Could not extract original tool name from prefixed name: ${prefixedToolName}` }],
+       };
     }
 
     try {
-      console.log(
+      logger.debug(
         `Proxying call to tool '${originalToolName}' on server '${serverName}' with args:`,
         toolArgs
       );
@@ -167,25 +174,32 @@ export class CallPluggedinToolTool {
       return await clientForTool.client.request(
         {
           method: "tools/call",
-          params: {
-            name: originalToolName,
-            arguments: toolArgs || {},
-            _meta: {
-              progressToken: requestMeta?.progressToken,
-            },
-          },
-        },
-        CompatibilityCallToolResultSchema // Use the schema that expects content/isError
-      );
-    } catch (error) {
-      console.error(
-        `Error calling tool '${originalToolName}' through ${serverName}:`,
-        error
-      );
-      // Re-throw the error to be handled by the MCP server framework
-      throw error;
-    }
-  }
-
-  // Registration will be handled in the main server setup (mcp-proxy.ts)
+         params: {
+           name: originalToolName,
+           arguments: toolArgs || {},
+           _meta: {
+             progressToken: meta?.progressToken, // Use meta here
+           },
+         },
+       },
+       CompatibilityCallToolResultSchema // Use the schema that expects content/isError
+     ) as ToolExecutionResult; // Explicitly cast the result
+     // The result from client.request should match ToolExecutionResult structure after type update
+     // return result; // Removed extraneous return
+   } catch (error) {
+     logger.error(
+       `Error calling tool '${originalToolName}' through ${serverName}:`,
+       error
+     );
+     // Return error structure matching ToolExecutionResult
+     const errorMessage = error instanceof Error ? error.message : String(error);
+     return {
+       isError: true,
+       content: [{ type: "text", text: `Error executing proxied tool: ${errorMessage}` }],
+     };
+   }
+ }
 }
+
+// Register the plugin instance with the registry
+pluginRegistry.register(new CallPluggedinToolTool());
