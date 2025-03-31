@@ -2,12 +2,12 @@ import axios from "axios";
 import { getPluggedinMCPApiBaseUrl, getPluggedinMCPApiKey } from "./utils.js";
 import { getMcpServers } from "./fetch-pluggedinmcp.js";
 import { initSessions, getSession } from "./sessions.js";
-import { getSessionKey } from "./utils.js";
-import { ListToolsResultSchema, ListResourcesResultSchema, Resource as SdkResource } from "@modelcontextprotocol/sdk/types.js"; // Renamed Resource to SdkResource to avoid conflict
-// import { logger } from "./logging.js"; // No longer needed, get from container
-import { container } from "./di-container.js"; // Import the DI container
-import { Logger } from "./logging.js"; // Import Logger type for casting
-import { PluggedinMCPToolReport, PluggedinMCPResourceReport, ResourceInfo, ToolSchema } from "./types.js"; // Import new types
+import { getSessionKey, sanitizeName } from "./utils.js"; // Added sanitizeName
+import { ListToolsResultSchema, ListResourcesResultSchema, Resource as SdkResource } from "@modelcontextprotocol/sdk/types.js";
+import { container } from "./di-container.js";
+import { Logger } from "./logging.js";
+import { PluggedinMCPToolReport, PluggedinMCPResourceReport, ResourceInfo, ToolSchema } from "./types.js";
+import { clearToolOriginMap, registerToolOrigin } from './tool-registry.js'; // Import registry functions
 
 // Removed local PluggedinMCPTool interface, using PluggedinMCPToolReport from types.ts
 
@@ -221,6 +221,9 @@ interface ReportAllResult {
 export async function reportAllCapabilities(concurrency = 3): Promise<ReportAllResult> {
   logger.info(`Starting capability reporting with concurrency ${concurrency}...`);
 
+  // Clear the existing tool origin map before starting discovery
+  clearToolOriginMap();
+
   const results: ReportAllResult = {
     totalServers: 0,
     processedServers: 0,
@@ -275,18 +278,25 @@ export async function reportAllCapabilities(concurrency = 3): Promise<ReportAllR
               );
 
               if (toolResult.tools && toolResult.tools.length > 0) {
-                logger.debug(`Reporting ${toolResult.tools.length} tools from ${serverName}...`);
-                // Map SDK Tool to PluggedinMCPToolReport
-                const toolsToReport: PluggedinMCPToolReport[] = toolResult.tools.map((tool) => ({
-                  name: tool.name,
-                  description: tool.description,
-                  inputSchema: tool.inputSchema as ToolSchema, // Cast inputSchema
-                  mcp_server_uuid: uuid,
-                  status: "ACTIVE", // Assuming default status
-                }));
+                logger.debug(`Found ${toolResult.tools.length} tools from ${serverName}. Registering origins and reporting...`);
+                const toolsToReport: PluggedinMCPToolReport[] = [];
 
+                // Register origin and prepare report data
+                toolResult.tools.forEach((tool) => {
+                  const prefixedToolName = `${sanitizeName(serverName)}__${tool.name}`;
+                  registerToolOrigin(prefixedToolName, sessionKey); // Register origin mapping
+                  toolsToReport.push({
+                    name: tool.name,
+                    description: tool.description,
+                    inputSchema: tool.inputSchema as ToolSchema,
+                    mcp_server_uuid: uuid,
+                    status: "ACTIVE", // Assuming default status
+                  });
+                });
+
+                // Report tools to the API
                 const reportResult = await reportToolsToPluggedinMCP(toolsToReport);
-                serverToolsReported = reportResult.successCount || 0;
+                serverToolsReported = reportResult.successCount || 0; // Assuming API returns success count correctly
                 if (reportResult.failureCount && reportResult.failureCount > 0) {
                    logger.warn(`Failed to report ${reportResult.failureCount} tools from ${serverName}. Errors: ${JSON.stringify(reportResult.errors)}`);
                 }

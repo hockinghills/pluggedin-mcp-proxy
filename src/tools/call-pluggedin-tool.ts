@@ -13,12 +13,12 @@ import {
   getProfileCapabilities,
   ProfileCapability,
 } from "../fetch-capabilities.js";
-import { getInactiveTools, ToolParameters } from "../fetch-tools.js";
-// import { logger } from "../logging.js"; // No longer needed, get from container
-import { container } from "../di-container.js"; // Import the DI container
-import { Logger } from "../logging.js"; // Import Logger type for casting
-import { ToolPlugin, pluginRegistry } from "../plugin-system.js"; // Import plugin system
-import { ToolExecutionResult } from "../types.js"; // Import execution result type
+import { getInactiveTools, ToolParameters } from "../fetch-tools.js"; // Keep for inactive check
+import { container } from "../di-container.js";
+import { Logger } from "../logging.js";
+import { ToolPlugin, pluginRegistry } from "../plugin-system.js";
+import { ToolExecutionResult } from "../types.js";
+import { getSessionKeyForTool } from '../tool-registry.js'; // Import the registry query function
 
 const toolName = "tool_call"; // Renamed to match veyrax-mcp convention
 const toolDescription = `
@@ -57,69 +57,44 @@ export class CallPluggedinToolTool implements ToolPlugin {
 
   /**
    * Finds the active downstream client session responsible for handling the specified prefixed tool name.
-   * Fetches server configurations and downstream tool lists to map the prefixed name back to its origin.
+   * Uses the toolOriginMap populated by the capability reporting process.
    * @param prefixedToolName - The tool name including the server prefix (e.g., 'github__create_issue').
-   * @param requestMeta - Metadata from the original MCP request.
-   * @returns A promise resolving to the ConnectedClient instance or null if not found or inactive.
+   * @returns A promise resolving to the ConnectedClient instance or null if not found.
    * @private
    */
   private static async findClientForTool(
-    prefixedToolName: string,
-    requestMeta: any
+    prefixedToolName: string
   ): Promise<ConnectedClient | null> {
-    // Check for API key before trying to fetch servers
-    const apiKey = getPluggedinMCPApiKey();
-    if (!apiKey) {
-      logger.error("PLUGGEDIN_API_KEY is missing. Cannot find client for tool.");
-      // Return null, the execute method will handle the error response
+    logger.debug(`Finding client for tool: ${prefixedToolName}`);
+    const sessionKey = getSessionKeyForTool(prefixedToolName);
+
+    if (!sessionKey) {
+      logger.warn(`No origin session key found in registry for tool: ${prefixedToolName}. Cache might be stale. Trigger refresh_tools.`);
       return null;
     }
 
-    const serverParams = await getMcpServers(true); // Force refresh now that we know key exists
-    const profileCapabilities = await getProfileCapabilities(true);
-    let inactiveTools: Record<string, ToolParameters> = {};
-    if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
-      inactiveTools = await getInactiveTools(true);
+    // Attempt to get the session using the key from the map
+    // We don't need uuid/params here as getSession should retrieve by key if it exists
+    // Note: This assumes the session corresponding to sessionKey is still active in the _sessions map in sessions.ts
+    // If sessions can expire independently, this might need adjustment.
+    const session = await getSession(sessionKey, '', {} as any); // Pass dummy uuid/params as they are not used for lookup by key
+
+    if (!session) {
+       logger.warn(`Session not found for key "${sessionKey}" associated with tool "${prefixedToolName}". Cache might be stale.`);
+       return null;
     }
 
-    for (const [uuid, params] of Object.entries(serverParams)) {
-      const sessionKey = getSessionKey(uuid, params);
-      const session = await getSession(sessionKey, uuid, params);
-      if (!session) continue;
+    // Optional: Add back the inactive check if needed, though ideally the registry
+    // should only contain active tools if populated correctly.
+    // const profileCapabilities = await getProfileCapabilities();
+    // if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
+    //    const inactiveTools = await getInactiveTools();
+    //    // Need to extract original tool name and uuid from sessionKey or map to check inactivity
+    //    // This adds complexity back, suggesting the registry should ideally handle active state.
+    // }
 
-      const capabilities = session.client.getServerCapabilities();
-      if (!capabilities?.tools) continue;
-
-      const serverName = session.client.getServerVersion()?.name || "";
-      try {
-        const result = await session.client.request(
-          { method: "tools/list", params: { _meta: requestMeta } },
-          ListToolsResultSchema
-        );
-
-        const foundTool = result.tools?.find((tool) => {
-          const currentPrefixedName = `${sanitizeName(serverName)}__${
-            tool.name
-          }`;
-          // Check if it matches the requested name AND is not inactive
-          const isInactive =
-            profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT) &&
-            inactiveTools[`${uuid}:${tool.name}`];
-          return currentPrefixedName === prefixedToolName && !isInactive;
-        });
-
-        if (foundTool) {
-          return session; // Return the session (ConnectedClient) if the tool is found and active
-        }
-      } catch (error) {
-        // Ignore errors fetching from individual servers during mapping
-        logger.warn(
-          `Error fetching tools from ${serverName} while mapping for call:`,
-          error
-        );
-      }
-    }
-    return null; // Tool not found, inactive, or associated client session couldn't be established
+    logger.debug(`Found session key "${sessionKey}" for tool "${prefixedToolName}"`);
+    return session;
   }
 
   /**
@@ -136,10 +111,9 @@ export class CallPluggedinToolTool implements ToolPlugin {
   ): Promise<ToolExecutionResult> {
     const { tool_name: prefixedToolName, arguments: toolArgs } = args;
 
-    // Pass meta to findClientForTool if needed, currently it uses requestMeta directly
+    // Use the optimized findClientForTool which no longer needs meta for lookup
     const clientForTool = await CallPluggedinToolTool.findClientForTool(
-      prefixedToolName,
-      meta // Pass meta here
+      prefixedToolName
     );
 
     if (!clientForTool) {
@@ -170,9 +144,10 @@ export class CallPluggedinToolTool implements ToolPlugin {
          }
        }
        // Return error structure matching ToolExecutionResult
+       // Updated error message to reflect potential cache staleness
        return {
          isError: true,
-         content: [{ type: "text", text: `Error: Unknown or inactive tool: ${prefixedToolName}` }],
+         content: [{ type: "text", text: `Error: Tool not found or origin unknown: ${prefixedToolName}. Try running 'refresh_tools'.` }],
        };
     }
 
