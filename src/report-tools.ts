@@ -3,7 +3,7 @@ import { getPluggedinMCPApiBaseUrl, getPluggedinMCPApiKey } from "./utils.js";
 import { getMcpServers } from "./fetch-pluggedinmcp.js";
 import { initSessions, getSession } from "./sessions.js";
 import { getSessionKey } from "./utils.js";
-import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ListToolsResultSchema, ListResourcesResultSchema, Resource } from "@modelcontextprotocol/sdk/types.js"; // Added ListResourcesResultSchema, Resource
 
 // Define interface for tool data structure
 export interface PluggedinMCPTool {
@@ -112,8 +112,64 @@ export async function reportToolsToPluggedinMCP(tools: PluggedinMCPTool[]) {
   }
 }
 
-// Function to fetch all MCP servers, initialize clients, and report tools to PluggedinMCP API
-export async function reportAllTools() {
+// API route handler for submitting resources to PluggedinMCP
+// Similar to reportToolsToPluggedinMCP but for resources
+export async function reportResourcesToPluggedinMCP(resources: Array<Omit<Resource, 'content' | 'contents' | 'error'> & { mcp_server_uuid: string }>) {
+  try {
+    const apiKey = getPluggedinMCPApiKey();
+    const apiBaseUrl = getPluggedinMCPApiBaseUrl();
+
+    if (!apiKey || !apiBaseUrl) {
+      console.error("API key or base URL not set for reporting resources");
+      return { error: "API key or base URL not set" };
+    }
+
+    if (!Array.isArray(resources) || resources.length === 0) {
+      // It's okay to report zero resources if a server has none
+      return { successCount: 0, failureCount: 0, errors: [] };
+    }
+
+    // Prepare data for submission (ensure required fields are present)
+    const validResources = resources.map(res => ({
+      uri: res.uri,
+      name: res.name,
+      description: res.description,
+      mime_type: res.mediaType, // Map mediaType to mime_type for the API
+      mcp_server_uuid: res.mcp_server_uuid,
+    }));
+
+    const response = await axios.post(
+      `${apiBaseUrl}/api/resources`, // Use the new endpoint
+      { resources: validResources },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+      }
+    );
+
+    return {
+      successCount: response.data.successCount || 0,
+      failureCount: response.data.errorCount || 0,
+      errors: response.data.errors || [],
+    };
+
+  } catch (error: any) {
+     console.error("Error reporting resources to PluggedinMCP API:", error.response?.data || error.message);
+     return {
+       error: "Failed to report resources",
+       details: error.response?.data || error.message,
+       successCount: 0,
+       failureCount: resources.length, // Assume all failed if API call fails
+       errors: resources.map(r => ({ resource: r, error: 'API call failed' })),
+     };
+  }
+}
+
+
+// Function to fetch all MCP servers, initialize clients, and report capabilities (tools AND resources)
+export async function reportAllCapabilities() { // Renamed function
   // console.log("Fetching all MCPs and initializing clients..."); // Removed log
 
   // Get all MCP servers
@@ -124,7 +180,7 @@ export async function reportAllTools() {
 
   // console.log(`Found ${Object.keys(serverParams).length} MCP servers`); // Removed log
 
-  // For each server, get its tools and report them
+  // For each server, get its capabilities and report them
   await Promise.allSettled(
     Object.entries(serverParams).map(async ([uuid, params]) => {
       const sessionKey = getSessionKey(uuid, params);
@@ -136,46 +192,68 @@ export async function reportAllTools() {
       }
 
       const capabilities = session.client.getServerCapabilities();
-      if (!capabilities?.tools) {
-        // console.log(`Server ${params.name} (${uuid}) does not support tools`); // Removed log
-        return;
-      }
+      const serverName = params.name || uuid;
 
-      try {
-        // console.log(`Fetching tools from ${params.name} (${uuid})...`); // Removed log
-
-        const result = await session.client.request(
-          { method: "tools/list", params: {} },
-          ListToolsResultSchema
-        );
-
-        if (result.tools && result.tools.length > 0) {
-          // console.log( // Removed log
-          //   `Reporting ${result.tools.length} tools from ${params.name} to PluggedinMCP API...`
-          // );
-
-          const reportResult = await reportToolsToPluggedinMCP(
-            result.tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              toolSchema: tool.inputSchema,
-              mcp_server_uuid: uuid,
-              status: "ACTIVE", // Explicitly set status to ACTIVE
-            }))
+      // --- Report Tools ---
+      if (capabilities?.tools) {
+        try {
+          // console.log(`Fetching tools from ${serverName}...`); // Removed log
+          const toolResult = await session.client.request(
+            { method: "tools/list", params: {} },
+            ListToolsResultSchema
           );
 
-          // console.log( // Removed log
-          //   `Reported tools from ${params.name}: ${reportResult.successCount} succeeded, ${reportResult.failureCount} failed`
-          // );
-        } else {
-          // console.log(`No tools found for ${params.name}`); // Removed log
+          if (toolResult.tools && toolResult.tools.length > 0) {
+            // console.log(`Reporting ${toolResult.tools.length} tools from ${serverName}...`); // Removed log
+            const reportResult = await reportToolsToPluggedinMCP(
+              toolResult.tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                toolSchema: tool.inputSchema,
+                mcp_server_uuid: uuid,
+                status: "ACTIVE",
+              }))
+            );
+            // console.log(`Reported tools from ${serverName}: ${reportResult.successCount} succeeded, ${reportResult.failureCount} failed`); // Removed log
+          } else {
+            // console.log(`No tools found for ${serverName}`); // Removed log
+          }
+        } catch (error) {
+          console.error(`Error reporting tools for ${serverName}:`, error); // Keep essential error logs
         }
-      } catch (error) {
-        // console.error(`Error reporting tools for ${params.name}:`, error); // Removed log
+      } else {
+         // console.log(`Server ${serverName} does not support tools`); // Removed log
+      }
+
+      // --- Report Resources ---
+      if (capabilities?.resources) {
+         try {
+           // console.log(`Fetching resources from ${serverName}...`); // Removed log
+           const resourceResult = await session.client.request(
+             { method: "resources/list", params: {} },
+             ListResourcesResultSchema
+           );
+
+           if (resourceResult.resources && resourceResult.resources.length > 0) {
+             // console.log(`Reporting ${resourceResult.resources.length} resources from ${serverName}...`); // Removed log
+             const reportResult = await reportResourcesToPluggedinMCP(
+               resourceResult.resources.map((res) => ({
+                 ...res, // Spread the resource object
+                 mcp_server_uuid: uuid, // Add the server UUID
+               }))
+             );
+             // console.log(`Reported resources from ${serverName}: ${reportResult.successCount} succeeded, ${reportResult.failureCount} failed`); // Removed log
+           } else {
+             // console.log(`No resources found for ${serverName}`); // Removed log
+           }
+         } catch (error) {
+           console.error(`Error reporting resources for ${serverName}:`, error); // Keep essential error logs
+         }
+      } else {
+         // console.log(`Server ${serverName} does not support resources`); // Removed log
       }
     })
   );
 
-  // console.log("Finished reporting all tools to PluggedinMCP API"); // Removed log
-  // process.exit(0); // Remove exit call when used as a module/script
+  // console.log("Finished reporting all capabilities to PluggedinMCP API"); // Removed log
 }

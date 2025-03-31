@@ -1,9 +1,9 @@
-#!/usr/bin/env node
+pnpm run db::#!/usr/bin/env node
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./mcp-proxy.js";
 import { Command } from "commander";
-import { reportAllTools } from "./report-tools.js";
+import { reportAllCapabilities } from "./report-tools.js"; // Renamed import
 import { cleanupAllSessions } from "./sessions.js";
 
 const program = new Command();
@@ -38,7 +38,7 @@ if (options.pluggedinApiBaseUrl) {
 async function main() {
   // If --report flag is set, run the reporting function instead of starting the server
   if (options.report) {
-    await reportAllTools();
+    await reportAllCapabilities(); // Use renamed function
     await cleanupAllSessions();
     return;
   }
@@ -46,7 +46,7 @@ async function main() {
   try {
     // First discover and report all tools during normal startup
     // console.log("Starting initial tool discovery..."); // REMOVED - Cannot log to stdout
-    await reportAllTools();
+    // await reportAllTools(); // REMOVED - This was causing slow startup/timeouts
     // console.log("Initial tool discovery completed"); // REMOVED - Cannot log to stdout
 
     // Then create and start the server

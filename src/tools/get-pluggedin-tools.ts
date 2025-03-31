@@ -2,18 +2,20 @@ import { z } from "zod";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   Tool,
-  ListToolsResultSchema,
-  CompatibilityCallToolResultSchema, // Keep for reference, but execute returns string now
+  // ListToolsResultSchema, // No longer needed for live discovery
+  // CompatibilityCallToolResultSchema, // Keep for reference, but execute returns string now
 } from "@modelcontextprotocol/sdk/types.js";
-import { getMcpServers, ServerParameters } from "../fetch-pluggedinmcp.js"; // Import ServerParameters
-import { getSessionKey, sanitizeName, getPluggedinMCPApiKey } from "../utils.js"; // Import getPluggedinMCPApiKey
-import { getSession } from "../sessions.js";
-import { reportToolsToPluggedinMCP } from "../report-tools.js";
-import { getInactiveTools, ToolParameters } from "../fetch-tools.js";
-import {
-  getProfileCapabilities,
-  ProfileCapability,
-} from "../fetch-capabilities.js";
+// import { getMcpServers, ServerParameters } from "../fetch-pluggedinmcp.js"; // No longer needed
+import { getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "../utils.js"; // Import API utils
+// import { getSessionKey, sanitizeName } from "../utils.js"; // No longer needed
+// import { getSession } from "../sessions.js"; // No longer needed
+// import { reportToolsToPluggedinMCP } from "../report-tools.js"; // No longer needed
+// import { getInactiveTools, ToolParameters } from "../fetch-tools.js"; // No longer needed
+// import {
+//   getProfileCapabilities,
+//   ProfileCapability,
+// } from "../fetch-capabilities.js"; // No longer needed
+import axios from "axios"; // Import axios
 
 const toolName = "get_tools"; 
 const toolDescription = `
@@ -29,121 +31,83 @@ export class GetPluggedinToolsTool {
   static description = toolDescription;
   static inputSchema = GetPluggedinToolsSchema;
 
-  // This method will be called by the MCP server when the tool is invoked
+  // This method fetches the cached tool list from the pluggedin-app API
   static async execute(
-    requestMeta: any 
-  ): Promise<any> { // Change return type to any for this workaround
-    
-    const toolToClientMapping: Record<string, any> = {}; 
+    requestMeta: any // requestMeta might not be needed anymore, but kept for signature consistency
+  ): Promise<string> { // Return type is string (JSON array of names)
 
-    const apiKey = getPluggedinMCPApiKey(); 
-    if (!apiKey) {
-      // console.warn("PLUGGEDIN_API_KEY is missing during get_tools execution. Returning empty list."); // Removed log
-      // Return empty array string directly
-      return "[]"; 
+    const apiKey = getPluggedinMCPApiKey();
+    const apiBaseUrl = getPluggedinMCPApiBaseUrl();
+
+    if (!apiKey || !apiBaseUrl) {
+      console.error("PLUGGEDIN_API_KEY or PLUGGEDIN_API_BASE_URL is missing for get_tools.");
+      return "[]"; // Return empty JSON array string on configuration error
     }
-
-    // Fetch necessary data (handle potential errors within these functions if needed)
-    let profileCapabilities: ProfileCapability[] = [];
-    let serverParams: Record<string, ServerParameters> = {};
-    let inactiveTools: Record<string, ToolParameters> = {};
 
     try {
-      profileCapabilities = await getProfileCapabilities(true);
-      serverParams = await getMcpServers(true); 
-      if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
-        inactiveTools = await getInactiveTools(true);
-      }
-    } catch (fetchError) {
-       console.error("Error fetching initial data for get_tools:", fetchError);
-       // Return empty array string on error
-       return "[]"; 
-    }
-
-
-    if (Object.keys(serverParams).length === 0) {
-       // console.warn("No downstream MCP servers found or fetched."); // Removed log
-       // Return empty array string if no servers found
-       return "[]"; 
-    }
-
-
-    const allProxiedTools: Tool[] = [];
-
-    await Promise.allSettled(
-      Object.entries(serverParams).map(async ([uuid, params]) => {
-        const sessionKey = getSessionKey(uuid, params);
-        const session = await getSession(sessionKey, uuid, params);
-        if (!session) return;
-
-        const capabilities = session.client.getServerCapabilities();
-        if (!capabilities?.tools) return;
-
-        const serverName = session.client.getServerVersion()?.name || "";
-        try {
-          const result = await session.client.request(
-            {
-              method: "tools/list",
-              params: { _meta: requestMeta }, 
-            },
-            ListToolsResultSchema
-          );
-
-          const toolsWithSource =
-            result.tools
-              ?.filter((tool) => {
-                if (
-                  profileCapabilities.includes(
-                    ProfileCapability.TOOLS_MANAGEMENT
-                  )
-                ) {
-                  return !inactiveTools[`${uuid}:${tool.name}`];
-                }
-                return true;
-              })
-              .map((tool) => {
-                const prefixedToolName = `${sanitizeName(serverName)}__${
-                  tool.name
-                }`;
-                toolToClientMapping[prefixedToolName] = session; // This mapping needs to be handled by CallPluggedinToolTool
-                return {
-                  ...tool,
-                  name: prefixedToolName,
-                  description: `[${serverName}] ${tool.description || ""}`,
-                };
-              }) || [];
-
-          // Reporting tools here might be redundant if done elsewhere, but kept for now
-          if (
-            profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT) &&
-            result.tools
-          ) {
-            reportToolsToPluggedinMCP(
-              result.tools.map((tool) => ({
-                name: tool.name,
-                description: tool.description,
-                toolSchema: tool.inputSchema,
-                mcp_server_uuid: uuid,
-              }))
-            ).catch((err) =>
-              console.error("Error reporting tools during get_pluggedin_tools:", err) // Keep essential error logs
-            );
-          }
-
-          allProxiedTools.push(...toolsWithSource);
-        } catch (error) {
-          console.error( // Keep essential error logs
-            `Error fetching tools from: ${serverName} during get_pluggedin_tools`,
-            error
-          );
+      // Fetch the cached tools from the pluggedin-app API
+      const response = await axios.get(
+        `${apiBaseUrl}/api/tools`, // Endpoint that returns all tools for the profile
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
         }
-      })
-    );
+      );
 
-    // Extract just the names
-    const toolNames = allProxiedTools.map(tool => tool.name);
-    
-    // Return the stringified list of tool names directly
-    return JSON.stringify(toolNames, null, 2); 
+      // Check if the response structure is as expected
+      if (!response.data || !Array.isArray(response.data.results)) {
+        console.error("Invalid response structure received from /api/tools:", response.data);
+        return "[]";
+      }
+
+      // The API returns tool objects, we need to extract the names
+      // Assuming the API returns objects with a 'name' and 'mcp_server_uuid'
+      // We also need the server name for prefixing, which might require another API call or adjustment to /api/tools response
+      
+      // --- TEMPORARY WORKAROUND: Fetch server names separately ---
+      // This adds an extra API call, ideally /api/tools should include server names
+      let serverNames: Record<string, string> = {};
+      try {
+        const serversResponse = await axios.get(
+          `${apiBaseUrl}/api/mcp-servers`, // Assuming this endpoint exists and returns { uuid: { name: ... } }
+           { headers: { Authorization: `Bearer ${apiKey}` } }
+        );
+        if (serversResponse.data && typeof serversResponse.data === 'object') {
+           // Assuming the response format is { [uuid]: { name: 'serverName', ... } }
+           Object.entries(serversResponse.data).forEach(([uuid, serverData]: [string, any]) => {
+             if (serverData && serverData.name) {
+               serverNames[uuid] = serverData.name;
+             }
+           });
+        } else {
+           console.error("Invalid response structure from /api/mcp-servers");
+        }
+      } catch (serverFetchError) {
+         console.error("Error fetching server names for prefixing:", serverFetchError);
+         // Proceed without prefixing if server names cannot be fetched
+      }
+      // --- END TEMPORARY WORKAROUND ---
+
+
+      const toolsFromApi: Array<{ name: string; mcp_server_uuid: string; description?: string }> = response.data.results;
+
+      // Map to prefixed names
+      const toolNames = toolsFromApi.map(tool => {
+         const serverName = serverNames[tool.mcp_server_uuid] || tool.mcp_server_uuid; // Fallback to UUID
+         // Apply the same prefixing logic used during discovery/reporting
+         // Assuming sanitizeName is available or reimplemented if needed
+         const sanitize = (name: string) => name.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
+         return `${sanitize(serverName)}__${tool.name}`;
+      });
+
+      // Return the stringified list of prefixed tool names
+      return JSON.stringify(toolNames, null, 2);
+
+    } catch (error) {
+      console.error("Error fetching cached tools via /api/tools:", error);
+      // Return empty JSON array string on API error
+      return "[]";
+    }
   }
 }

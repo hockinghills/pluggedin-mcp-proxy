@@ -32,6 +32,7 @@ import {
 } from "./fetch-capabilities.js";
 import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js";
 import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js";
+import { reportAllCapabilities } from "./report-tools.js"; // Renamed import
 import { readFileSync } from 'fs';
 import { createRequire } from 'module';
 
@@ -95,9 +96,15 @@ export const createServer = async () => {
               description: "The arguments object required by the specific proxied tool being called.",
               default: {} 
             }
-          },
-          required: ["tool_name"] 
+            },
+            required: ["tool_name"]
         },
+      },
+      // Add definition for refresh_tools
+      {
+        name: "refresh_tools",
+        description: "Triggers a live discovery of tools from all configured downstream MCP servers and updates the cache. This operation might take some time.",
+        inputSchema: { type: "object" }, // No input arguments needed
       },
     ];
     const responsePayload = { tools: staticTools };
@@ -117,12 +124,26 @@ export const createServer = async () => {
           ],
         };
       } else if (name === CallPluggedinToolTool.toolName) {
-        const validatedArgs = CallPluggedinToolTool.inputSchema.parse(args); 
-        return await CallPluggedinToolTool.execute(validatedArgs, meta); 
+        const validatedArgs = CallPluggedinToolTool.inputSchema.parse(args);
+        return await CallPluggedinToolTool.execute(validatedArgs, meta);
+      } else if (name === "refresh_tools") {
+        // Execute the live discovery and reporting process
+        // This is intentionally async and doesn't wait for completion
+        // to avoid blocking the MCP client for a potentially long operation.
+        reportAllCapabilities().catch((err: any) => { // Use renamed function and type err
+          // Log errors from the background refresh process to stderr
+          console.error("Error during background capability refresh:", err); 
+        });
+        // Return immediately with a success message
+        return {
+          content: [
+            { type: "text", text: "Capability refresh process initiated in the background." }, // Updated message
+          ],
+        };
       } else {
         // errorLog(`Unknown static tool requested: ${name}`); // Removed log
         throw new Error(
-          `Unknown tool: ${name}. Use 'get_tools' to list available tools and 'tool_call' to execute them.`
+          `Unknown tool: ${name}. Use 'get_tools' to list available tools, 'tool_call' to execute them, or 'refresh_tools' to update the list.`
         );
       }
     } catch (error) { 
@@ -196,60 +217,83 @@ export const createServer = async () => {
 
   // List Resources Handler
   server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
-    try { 
-      console.error("[DEBUG] ListResourcesRequestSchema handler called"); // Added debug log
+    try {
+      console.error("[DEBUG] ListResourcesRequestSchema handler called - Fetching cached resources"); // Updated debug log
 
-      const serverParams = await getMcpServers(true);
-      console.error(`[DEBUG] Found ${Object.keys(serverParams).length} active servers`); // Added debug log
-      let allResources: z.infer<typeof ListResourcesResultSchema>["resources"] = []; // Changed to let
+      const apiKey = getPluggedinMCPApiKey();
+      const apiBaseUrl = getPluggedinMCPApiBaseUrl();
+      let allResources: z.infer<typeof ListResourcesResultSchema>["resources"] = [];
 
-      // Get tools as resources first
+      if (!apiKey || !apiBaseUrl) {
+        console.error("API key or base URL not set, cannot fetch resources.");
+        // Still return tool resources if possible
+        allResources = await getToolsAsResources();
+        return { resources: allResources, nextCursor: request.params?.cursor };
+      }
+
+      // Get tool-based resources (already cached or fetched from /api/tools)
       const toolResources = await getToolsAsResources();
-      console.error(`[DEBUG] Found ${toolResources.length} tool resources`); // Added debug log
-      allResources = [...toolResources]; // Initialize with tool resources
+      console.error(`[DEBUG] Found ${toolResources.length} tool resources`);
+      allResources = [...toolResources];
 
-      // Then add other resources from MCP servers
-      await Promise.allSettled(
-        Object.entries(serverParams).map(async ([uuid, params]) => {
-          const serverNameLog = params.name || uuid;
-          try { 
-            const sessionKey = getSessionKey(uuid, params);
-            const session = await getSession(sessionKey, uuid, params);
-            if (!session) {
-              // debugLog(`[ListResources] No session for ${serverNameLog}`); // Removed log
-              return;
-            }
-            
-            const capabilities = session.client.getServerCapabilities();
-            if (!capabilities?.resources) {
-               // debugLog(`[ListResources] Server ${serverNameLog} does not report resource capability.`); // Removed log
-               return;
-            }
-            
-            const actualServerName = session.client.getServerVersion()?.name || serverNameLog; 
-            // debugLog(`[ListResources] Checking server: ${actualServerName} (${uuid})`); // Removed log
-            const result = await session.client.request({ method: "resources/list", params: { cursor: request.params?.cursor, _meta: request.params?._meta } }, ListResourcesResultSchema);
-            // debugLog(`[ListResources] Received ${result.resources?.length ?? 0} resources from ${actualServerName}`); // Removed log
-            if (result.resources) {
-              result.resources.forEach(resource => {
-                // Ensure we don't overwrite tool resources if URIs somehow clash (unlikely)
-                if (!resourceToClient[resource.uri]) { 
-                  resourceToClient[resource.uri] = session; 
-                  allResources.push({ ...resource, name: `[${actualServerName}] ${resource.name || ""}` });
-                }
-              });
-            }
-          } catch (error) {
-              // errorLog(`[ListResources] Error processing server ${serverNameLog}:`, error); // Removed log
+      // Fetch cached non-tool resources from the new API endpoint
+      try {
+        const response = await axios.get(
+          `${apiBaseUrl}/api/resources`, // Fetch from the new endpoint
+          {
+            headers: { Authorization: `Bearer ${apiKey}` },
           }
-        })
-      );
-      
-      console.error(`[DEBUG] Returning ${allResources.length} total resources`); // Added debug log
-      return { resources: allResources, nextCursor: request.params?.cursor };
-    } catch (handlerError) { 
-       console.error("[DEBUG] Error in ListResourcesRequestSchema handler:", handlerError); // Added debug log
-       // errorLog("[ListResources Handler Error]", handlerError); // Removed log - Replaced with console.error
+        );
+
+        if (response.data && Array.isArray(response.data.results)) {
+          const cachedResourcesFromApi: Array<{
+            uri: string;
+            name?: string;
+            description?: string;
+            mime_type?: string;
+            serverName?: string; // Expect serverName from API
+          }> = response.data.results;
+
+          console.error(`[DEBUG] Found ${cachedResourcesFromApi.length} cached non-tool resources from API`);
+
+          // Map API response to MCP Resource format and add prefix
+          const mappedCachedResources = cachedResourcesFromApi.map(res => ({
+            uri: res.uri,
+            name: `[${res.serverName || 'Unknown Server'}] ${res.name || res.uri}`, // Add prefix
+            description: res.description,
+            mediaType: res.mime_type,
+          }));
+
+          // Combine tool resources and cached non-tool resources
+          allResources = [...toolResources, ...mappedCachedResources];
+
+        } else {
+          console.error("Invalid response structure received from /api/resources:", response.data);
+          // Proceed with only tool resources if API call fails
+        }
+      } catch (apiError) {
+        console.error("Error fetching cached resources from /api/resources:", apiError);
+        // Proceed with only tool resources if API call fails
+      }
+
+      // Clear the old resourceToClient mapping as it's no longer populated by live discovery
+      // This map was used by ReadResource handler for non-tool resources.
+      // We need to adjust ReadResource handler for non-tool resources if needed,
+      // or assume ReadResource only works for tool resources now.
+      // For now, let's clear it. ReadResource will fail for non-tool URIs.
+      Object.keys(resourceToClient).forEach(key => {
+         // Only delete keys not starting with mcp://tools/
+         if (!key.startsWith('mcp://tools/')) {
+            delete resourceToClient[key];
+         }
+      });
+
+
+      console.error(`[DEBUG] Returning ${allResources.length} total resources (tools + cached)`);
+      return { resources: allResources, nextCursor: request.params?.cursor }; // Assuming no pagination from cache for now
+
+    } catch (handlerError) {
+       console.error("[DEBUG] Error in ListResourcesRequestSchema handler:", handlerError);
        return { 
          error: "Failed to list resources due to an internal error.",
          details: handlerError instanceof Error ? handlerError.message : String(handlerError),
