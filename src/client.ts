@@ -5,7 +5,16 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { ServerParameters } from "./fetch-metamcp.js";
+import { ServerParameters } from "./types.js";
+import { createRequire } from 'module';
+import { container } from './di-container.js'; // Import container
+import { Logger } from './logging.js'; // Import Logger type
+
+const customRequire = createRequire(import.meta.url);
+const packageJson = customRequire('../package.json');
+
+// Get logger instance
+const logger = container.get<Logger>('logger');
 
 const sleep = (time: number) =>
   new Promise<void>((resolve) => setTimeout(() => resolve(), time));
@@ -14,7 +23,7 @@ export interface ConnectedClient {
   cleanup: () => Promise<void>;
 }
 
-export const createMetaMcpClient = (
+export const createPluggedinMCPClient = (
   serverParams: ServerParameters
 ): { client: Client | undefined; transport: Transport | undefined } => {
   let transport: Transport | undefined;
@@ -33,14 +42,14 @@ export const createMetaMcpClient = (
   } else if (serverParams.type === "SSE" && serverParams.url) {
     transport = new SSEClientTransport(new URL(serverParams.url));
   } else {
-    console.error(`Unsupported server type: ${serverParams.type}`);
+    logger.error(`Unsupported server type: ${serverParams.type} for server ${serverParams.name} (${serverParams.uuid})`);
     return { client: undefined, transport: undefined };
   }
 
   const client = new Client(
     {
-      name: "MetaMCP",
-      version: "0.4.0",
+      name: "PluggedinMCP",
+      version: packageJson.version, // Use version from package.json
     },
     {
       capabilities: {
@@ -53,7 +62,7 @@ export const createMetaMcpClient = (
   return { client, transport };
 };
 
-export const connectMetaMcpClient = async (
+export const connectPluggedinMCPClient = async (
   client: Client,
   transport: Transport
 ): Promise<ConnectedClient | undefined> => {

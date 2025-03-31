@@ -1,28 +1,20 @@
 import axios from "axios";
 import {
   getDefaultEnvironment,
-  getMetaMcpApiBaseUrl,
-  getMetaMcpApiKey,
+  getPluggedinMCPApiBaseUrl,
+  getPluggedinMCPApiKey,
 } from "./utils.js";
-
-// Define a new interface for server parameters that can be either STDIO or SSE
-export interface ServerParameters {
-  uuid: string;
-  name: string;
-  description: string;
-  type?: "STDIO" | "SSE"; // Optional field, defaults to "STDIO" when undefined
-  command?: string | null;
-  args?: string[] | null;
-  env?: Record<string, string> | null;
-  url?: string | null;
-  created_at: string;
-  profile_uuid: string;
-  status: string;
-}
+// import { logger } from "./logging.js"; // No longer needed, get from container
+import { container } from "./di-container.js"; // Import the DI container
+import { Logger } from "./logging.js"; // Import Logger type for casting
+import { ServerParameters } from "./types.js"; // Import ServerParameters type
 
 let _mcpServersCache: Record<string, ServerParameters> | null = null;
 let _mcpServersCacheTimestamp: number = 0;
 const CACHE_TTL_MS = 1000; // 1 second cache TTL
+
+// Get logger instance from the DI container
+const logger = container.get<Logger>('logger');
 
 export async function getMcpServers(
   forceRefresh: boolean = false
@@ -38,13 +30,14 @@ export async function getMcpServers(
   }
 
   try {
-    const apiKey = getMetaMcpApiKey();
-    const apiBaseUrl = getMetaMcpApiBaseUrl();
+    const apiKey = getPluggedinMCPApiKey();
+    const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
-    if (!apiKey) {
-      console.error(
-        "METAMCP_API_KEY is not set. Please set it via environment variable or command line argument."
+    if (!apiKey || !apiBaseUrl) { // Also check apiBaseUrl
+      logger.error(
+        "PLUGGEDIN_API_KEY or PLUGGEDIN_API_BASE_URL is not set. Cannot fetch MCP servers."
       );
+      // Return the last known cache if available, otherwise empty object
       return _mcpServersCache || {};
     }
 
@@ -74,8 +67,8 @@ export async function getMcpServers(
       } else if (params.type === "SSE") {
         // For SSE servers, ensure url is present
         if (!params.url) {
-          console.warn(
-            `SSE server ${params.uuid} is missing url field, skipping`
+          logger.warn(
+            `SSE server ${params.uuid} (${params.name}) is missing url field, skipping`
           );
           continue;
         }
@@ -89,9 +82,13 @@ export async function getMcpServers(
 
     _mcpServersCache = serverDict;
     _mcpServersCacheTimestamp = currentTime;
+    logger.debug(`Fetched and cached ${Object.keys(serverDict).length} MCP server configurations.`);
     return serverDict;
-  } catch (error) {
+  } catch (error: any) { // Add type to error
+    logger.error("Failed to fetch MCP servers from API:", error.message || error);
+    // Return the last known cache if available on error, otherwise empty object
     if (_mcpServersCache !== null) {
+      logger.warn("Returning stale MCP server cache due to fetch error.");
       return _mcpServersCache;
     }
     return {};

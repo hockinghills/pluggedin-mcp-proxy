@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getMetaMcpApiBaseUrl, getMetaMcpApiKey } from "./utils.js";
+import { getPluggedinMCPApiBaseUrl, getPluggedinMCPApiKey } from "./utils.js";
 
 enum ToolStatus {
   ACTIVE = "ACTIVE",
@@ -31,13 +31,13 @@ export async function getInactiveTools(
   }
 
   try {
-    const apiKey = getMetaMcpApiKey();
-    const apiBaseUrl = getMetaMcpApiBaseUrl();
+    const apiKey = getPluggedinMCPApiKey();
+    const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
     if (!apiKey) {
-      console.error(
-        "METAMCP_API_KEY is not set. Please set it via environment variable or command line argument."
-      );
+      // console.error( // Temporarily comment out
+      //   "PLUGGEDIN_API_KEY is not set. Please set it via environment variable or command line argument."
+      // );
       return _toolsCache || {};
     }
 
