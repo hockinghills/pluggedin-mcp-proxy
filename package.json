@@ -44,7 +44,11 @@
     "dist",
     "smithery.yaml"
   ],
-  "main": "index.js",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./dist/report-tools.js": "./dist/report-tools.js"
+  },
   "keywords": [
     "MCP",
     "Proxy",
