@@ -42,9 +42,9 @@ export async function getMcpServers(
     const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
     if (!apiKey) {
-      console.error(
-        "PLUGGEDIN_API_KEY is not set. Please set it via environment variable or command line argument."
-      );
+      // console.error( // Temporarily comment out
+      //   "PLUGGEDIN_API_KEY is not set. Please set it via environment variable or command line argument."
+      // );
       return _mcpServersCache || {};
     }
 
@@ -74,9 +74,9 @@ export async function getMcpServers(
       } else if (params.type === "SSE") {
         // For SSE servers, ensure url is present
         if (!params.url) {
-          console.warn(
-            `SSE server ${params.uuid} is missing url field, skipping`
-          );
+          // console.warn( // Temporarily comment out
+          //   `SSE server ${params.uuid} is missing url field, skipping`
+          // );
           continue;
         }
       }

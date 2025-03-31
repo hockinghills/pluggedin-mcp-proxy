@@ -49,14 +49,18 @@ export function getDefaultEnvironment(): Record<string, string> {
  * Get the PluggedinMCP API base URL from environment variables
  */
 export function getPluggedinMCPApiBaseUrl(): string {
-  return process.env.PLUGGEDIN_API_BASE_URL || "https://plugged.in/";
+  const url = process.env.PLUGGEDIN_API_BASE_URL || "https://plugged.in/";
+  // console.log(`[DEBUG] getPluggedinMCPApiBaseUrl: Read from env: ${process.env.PLUGGEDIN_API_BASE_URL}, Using: ${url}`); // Removed Log
+  return url;
 }
 
 /**
  * Get the PluggedinMCP API key from environment variables
  */
 export function getPluggedinMCPApiKey(): string | undefined {
-  return process.env.PLUGGEDIN_API_KEY;
+  const key = process.env.PLUGGEDIN_API_KEY;
+  // console.log(`[DEBUG] getPluggedinMCPApiKey: Read from env: ${key ? key.substring(0, 5) + '...' : 'undefined'}`); // Removed Log
+  return key;
 }
 
 export function sanitizeName(name: string): string {

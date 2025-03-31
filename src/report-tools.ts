@@ -114,7 +114,7 @@ export async function reportToolsToPluggedinMCP(tools: PluggedinMCPTool[]) {
 
 // Function to fetch all MCP servers, initialize clients, and report tools to PluggedinMCP API
 export async function reportAllTools() {
-  console.log("Fetching all MCPs and initializing clients...");
+  // console.log("Fetching all MCPs and initializing clients..."); // Removed log
 
   // Get all MCP servers
   const serverParams = await getMcpServers();
@@ -122,7 +122,7 @@ export async function reportAllTools() {
   // Initialize all sessions
   await initSessions();
 
-  console.log(`Found ${Object.keys(serverParams).length} MCP servers`);
+  // console.log(`Found ${Object.keys(serverParams).length} MCP servers`); // Removed log
 
   // For each server, get its tools and report them
   await Promise.allSettled(
@@ -131,18 +131,18 @@ export async function reportAllTools() {
       const session = await getSession(sessionKey, uuid, params);
 
       if (!session) {
-        console.log(`Could not establish session for ${params.name} (${uuid})`);
+        // console.log(`Could not establish session for ${params.name} (${uuid})`); // Removed log
         return;
       }
 
       const capabilities = session.client.getServerCapabilities();
       if (!capabilities?.tools) {
-        console.log(`Server ${params.name} (${uuid}) does not support tools`);
+        // console.log(`Server ${params.name} (${uuid}) does not support tools`); // Removed log
         return;
       }
 
       try {
-        console.log(`Fetching tools from ${params.name} (${uuid})...`);
+        // console.log(`Fetching tools from ${params.name} (${uuid})...`); // Removed log
 
         const result = await session.client.request(
           { method: "tools/list", params: {} },
@@ -150,9 +150,9 @@ export async function reportAllTools() {
         );
 
         if (result.tools && result.tools.length > 0) {
-          console.log(
-            `Reporting ${result.tools.length} tools from ${params.name} to PluggedinMCP API...`
-          );
+          // console.log( // Removed log
+          //   `Reporting ${result.tools.length} tools from ${params.name} to PluggedinMCP API...`
+          // );
 
           const reportResult = await reportToolsToPluggedinMCP(
             result.tools.map((tool) => ({
@@ -164,18 +164,18 @@ export async function reportAllTools() {
             }))
           );
 
-          console.log(
-            `Reported tools from ${params.name}: ${reportResult.successCount} succeeded, ${reportResult.failureCount} failed`
-          );
+          // console.log( // Removed log
+          //   `Reported tools from ${params.name}: ${reportResult.successCount} succeeded, ${reportResult.failureCount} failed`
+          // );
         } else {
-          console.log(`No tools found for ${params.name}`);
+          // console.log(`No tools found for ${params.name}`); // Removed log
         }
       } catch (error) {
-        console.error(`Error reporting tools for ${params.name}:`, error);
+        // console.error(`Error reporting tools for ${params.name}:`, error); // Removed log
       }
     })
   );
 
-  console.log("Finished reporting all tools to PluggedinMCP API");
+  // console.log("Finished reporting all tools to PluggedinMCP API"); // Removed log
   // process.exit(0); // Remove exit call when used as a module/script
 }

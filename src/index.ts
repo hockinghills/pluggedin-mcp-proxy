@@ -47,7 +47,12 @@ async function main() {
 
   const { server, cleanup } = await createServer();
 
+  // Connect the server to the transport
   await server.connect(transport);
+
+  // Note: Debug logging for raw outgoing messages needs to be implemented
+  // within the transport layer or by modifying the SDK if direct access is needed.
+  // The wrapper attempt here was incorrect due to type mismatches.
 
   const handleExit = async () => {
     await cleanup();
