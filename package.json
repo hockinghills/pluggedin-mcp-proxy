@@ -1,6 +1,6 @@
 {
   "name": "@pluggedin/pluggedin-mcp-proxy",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "MCP Server PluggedinMCP manages all your other MCPs in one MCP.",
   "scripts": {
     "build": "tsc && shx chmod +x dist/*.js",
