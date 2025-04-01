@@ -34,15 +34,25 @@ import { ToolExecutionResult } from "./types.js";
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
 
-// Restore resource mapping
-const resourceToClient: Record<string, ConnectedClient> = {};
+// Map to store prefixed tool name -> { originalName, serverUuid }
+const toolToServerMap: Record<string, { originalName: string; serverUuid: string; }> = {};
 
 // Removed logger
 
-// Instantiate tool classes directly
-const getToolsInstance = new GetPluggedinToolsTool();
-const callToolInstance = new CallPluggedinToolTool();
-// Removed refresh tool instance
+// Define the static discovery tool schema using Zod
+const DiscoverToolsInputSchema = z.object({
+  server_uuid: z.string().uuid().optional().describe("Optional UUID of a specific server to discover. If omitted, attempts to discover all."),
+}).describe("Triggers tool discovery for configured MCP servers in the Pluggedin App.");
+
+// Define the static discovery tool structure
+const discoverToolsStaticTool: Tool = {
+    name: "pluggedin_discover_tools",
+    description: "Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App.",
+    inputSchema: zodToJsonSchema(DiscoverToolsInputSchema) as any,
+};
+
+
+// Removed old static tool instances (getToolsInstance, callToolInstance) as they are superseded by API fetching
 
 export const createServer = async () => {
   const server = new Server(
@@ -60,64 +70,155 @@ export const createServer = async () => {
     }
   );
 
-  // List Tools Handler - Manually define static tools
+  // List Tools Handler - Fetches prefixed tools from Pluggedin App API and adds static tool
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
-    const staticTools: Tool[] = [
-      {
-        name: getToolsInstance.name,
-        description: getToolsInstance.description,
-        inputSchema: zodToJsonSchema(getToolsInstance.inputSchema) as any,
-      },
-      {
-        name: callToolInstance.name,
-        description: callToolInstance.description,
-        inputSchema: zodToJsonSchema(callToolInstance.inputSchema) as any,
-      },
-      // Removed refresh_tools definition
-    ];
-    const responsePayload = { tools: staticTools };
-    return responsePayload;
+     let fetchedTools: (Tool & { _serverUuid: string })[] = [];
+     try {
+       const apiKey = getPluggedinMCPApiKey();
+       const baseUrl = getPluggedinMCPApiBaseUrl();
+       if (!apiKey || !baseUrl) {
+         throw new Error("Pluggedin API Key or Base URL is not configured.");
+       }
+
+       const apiUrl = `${baseUrl}/api/tools`; // Assuming this is the correct endpoint
+
+       // Fetch the list of tools (which now include prefixed names and _serverUuid)
+       const response = await axios.get<(Tool & { _serverUuid: string })[]>(apiUrl, {
+         headers: {
+           Authorization: `Bearer ${apiKey}`,
+         },
+         timeout: 10000,
+       });
+
+       const fetchedTools = response.data || [];
+
+       // Clear previous mapping and populate with new data
+       Object.keys(toolToServerMap).forEach(key => delete toolToServerMap[key]); // Clear map
+       fetchedTools.forEach(tool => {
+         // Extract original name (assuming prefix_originalName format)
+         const parts = tool.name.split('_');
+         const originalName = parts.slice(1).join('_'); // Handle names with underscores
+         if (originalName && tool._serverUuid) {
+            toolToServerMap[tool.name] = { originalName: originalName, serverUuid: tool._serverUuid };
+         } else {
+            console.error(`[ListTools Handler] Could not parse original name or missing UUID for tool: ${tool.name}`);
+         }
+       });
+
+       // Prepare the response payload according to MCP spec { tools: Tool[] }
+       // Remove the internal _serverUuid before sending to client
+       const toolsForClient: Tool[] = fetchedTools.map(({ _serverUuid, ...rest }) => rest);
+
+       // Note: Pagination not handled here, assumes API returns all tools
+
+       // Always include the static discovery tool
+       const allToolsForClient = [discoverToolsStaticTool, ...toolsForClient];
+
+       return { tools: allToolsForClient, nextCursor: undefined };
+
+     } catch (error: any) {
+       // Log API fetch error but still return the static tool
+       const errorMessage = axios.isAxiosError(error)
+         ? `API Error (${error.response?.status}): ${error.message}`
+         : error instanceof Error
+         ? error.message
+         : "Unknown error fetching tools from API";
+       console.error("[ListTools Handler Error]", errorMessage);
+       throw new Error(`Failed to list tools: ${errorMessage}`);
+     }
   });
 
-  // Call Tool Handler - Use if/else if to call tool logic directly
-  server.setRequestHandler(CallToolRequestSchema, async (request): Promise<any> => { // Use Promise<any>
-    const { name, arguments: args } = request.params;
+  // Call Tool Handler - Handles prefixed tool names and proxies to downstream server, plus static tool
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name: requestedToolName, arguments: args } = request.params;
     const meta = request.params._meta;
 
     try {
-      let executionResult; // Variable to hold the result
+        // Handle static discovery tool first
+        if (requestedToolName === discoverToolsStaticTool.name) {
+            console.error(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = DiscoverToolsInputSchema.parse(args ?? {}); // Validate args
 
-      if (name === getToolsInstance.name) {
-        const validatedArgs = getToolsInstance.inputSchema.parse(args); // Parse args with GetPluggedinToolsSchema
-        executionResult = await getToolsInstance.execute(validatedArgs, meta);
-      } else if (name === callToolInstance.name) {
-        const validatedArgs = callToolInstance.inputSchema.parse(args); // Parse args with CallPluggedinToolSchema
-        executionResult = await callToolInstance.execute(validatedArgs, meta);
-      // Removed refresh_tools case
-      } else {
-        // logger.error(`Unknown static tool requested: ${name}`); // Removed logging
-        // Return MCP MethodNotFound error
-        throw new Error(`Method not found: ${name}`); // Throwing error for SDK to handle
-      }
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for discovery trigger.");
+            }
 
-      // Return the execution result, casting to any
-      return executionResult as any;
+            // Define the API endpoint in pluggedin-app to trigger discovery
+            // (This endpoint needs to be created in pluggedin-app)
+            const discoveryApiUrl = validatedArgs.server_uuid
+                ? `${baseUrl}/api/discover/${validatedArgs.server_uuid}` // Endpoint for specific server
+                : `${baseUrl}/api/discover/all`; // Endpoint for all servers
+
+            try {
+                // Make POST request to trigger discovery
+                const discoveryResponse = await axios.post(discoveryApiUrl, {}, { // Empty body for trigger
+                    headers: { Authorization: `Bearer ${apiKey}` },
+                    timeout: 30000, // Allow longer timeout for discovery trigger
+                });
+
+                // Return success message from the discovery API response
+                const responseMessage = discoveryResponse.data?.message || "Discovery process initiated.";
+                return {
+                    content: [{ type: "text", text: responseMessage }],
+                    isError: false,
+                } as ToolExecutionResult; // Cast to expected type
+
+            } catch (apiError: any) {
+                 const errorMsg = axios.isAxiosError(apiError)
+                    ? `API Error (${apiError.response?.status}): ${apiError.response?.data?.error || apiError.message}`
+                    : apiError.message;
+                 throw new Error(`Failed to trigger discovery via API: ${errorMsg}`);
+            }
+        }
+
+        // Look up the downstream tool in our map
+        const toolInfo = toolToServerMap[requestedToolName];
+        if (!toolInfo) {
+            throw new Error(`Method not found: ${requestedToolName}`);
+        }
+
+        const { originalName, serverUuid } = toolInfo;
+
+        // Get the downstream server session
+        // Need to fetch server params again - potentially cache this?
+        const serverParams = await getMcpServers(true);
+        const params = serverParams[serverUuid];
+        if (!params) {
+            // Use requestedToolName here
+            throw new Error(`Configuration not found for server UUID: ${serverUuid} associated with tool ${requestedToolName}`);
+        }
+        const sessionKey = getSessionKey(serverUuid, params);
+        const session = await getSession(sessionKey, serverUuid, params);
+
+        if (!session) {
+            throw new Error(`Session not found for server UUID: ${serverUuid}`);
+        }
+
+        // Proxy the call to the downstream server using the ORIGINAL tool name
+        // Use requestedToolName here
+        console.error(`[CallTool Proxy] Calling original tool '${originalName}' on server ${serverUuid} for prefixed name '${requestedToolName}'`);
+        const result = await session.client.request(
+            { method: "tools/call", params: { name: originalName, arguments: args, _meta: meta } },
+            // Assuming downstream server returns CompatibilityCallToolResultSchema or similar
+            // Use a broad schema or 'any' if unsure, but CompatibilityCallToolResultSchema is safer
+             CompatibilityCallToolResultSchema
+        );
+
+        // Return the result directly, casting to any to satisfy the handler's complex return type
+        return result as any;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      // logger.error(`Error executing static tool ${name}:`, errorMessage, error); // Removed logging
+      // Use requestedToolName here, which is in scope
+      console.error(`[CallTool Handler Error] Tool: ${requestedToolName}, Error: ${errorMessage}`);
 
-      let errorDetail = errorMessage;
-      if (error instanceof z.ZodError) {
-        // Format Zod errors nicely
-        errorDetail = `Invalid arguments for tool ${name}: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
-      }
-
-      // Let SDK handle error formatting by re-throwing
+      // Re-throw the error for the SDK to format and send back to the client
       if (error instanceof Error) {
          throw error;
       } else {
-         throw new Error(errorDetail || "An unknown error occurred during tool execution");
+         throw new Error(errorMessage || "An unknown error occurred during tool execution");
       }
     }
   });
@@ -125,97 +226,71 @@ export const createServer = async () => {
   // Removed Get Prompt Handler
   // Removed List Prompts Handler
 
-  // List Resources Handler - Simplified to only proxy, with timeouts
+  // List Resources Handler - Fetches aggregated list from Pluggedin App API
   server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
-    const RESOURCE_REQUEST_TIMEOUT_MS = 5000; // 5 second timeout for each downstream server
-
-    // Helper function for timeout
-    const timeout = (ms: number, promise: Promise<any>) => {
-      let timer: NodeJS.Timeout;
-      return Promise.race([
-        promise,
-        new Promise((_, reject) => timer = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms))
-      ]).finally(() => clearTimeout(timer));
-    };
-
     try {
-      const serverParams = await getMcpServers(true);
-      const allResources: z.infer<typeof ListResourcesResultSchema>["resources"] = [];
-      // Clear mapping before populating
-      Object.keys(resourceToClient).forEach(key => delete resourceToClient[key]);
+      const apiKey = getPluggedinMCPApiKey();
+      const baseUrl = getPluggedinMCPApiBaseUrl();
+      if (!apiKey || !baseUrl) {
+        throw new Error("Pluggedin API Key or Base URL is not configured.");
+      }
 
-      const promises = Object.entries(serverParams).map(async ([uuid, params]) => {
-          try {
-            const sessionKey = getSessionKey(uuid, params);
-            const session = await getSession(sessionKey, uuid, params);
-            // Check if session exists and supports resources
-            if (!session || !session.client.getServerCapabilities()?.resources) {
-               return; // Skip servers without resource capability
-            }
-            const serverName = session.client.getServerVersion()?.name || "";
+      const apiUrl = `${baseUrl}/api/resources`; // Assuming this is the correct endpoint
 
-            // Wrap the request in a timeout
-            const result = await timeout(
-               RESOURCE_REQUEST_TIMEOUT_MS,
-               session.client.request({ method: "resources/list", params: { cursor: request.params?.cursor, _meta: request.params?._meta } }, ListResourcesResultSchema)
-            ) as z.infer<typeof ListResourcesResultSchema>; // Correctly infer type from Zod schema
+      // console.error(`[Proxy - ListResources] Fetching from ${apiUrl}`); // Debug log
 
-            if (result.resources && result.resources.length > 0) {
-              // Use a temporary array to avoid race conditions on allResources
-              const serverResources: z.infer<typeof ListResourcesResultSchema>["resources"] = [];
-              // Add explicit type for resource parameter
-              result.resources.forEach((resource: z.infer<typeof ListResourcesResultSchema>["resources"][number]) => {
-                // Store mapping for ReadResource
-                resourceToClient[resource.uri] = session;
-                // Add prefix to name for clarity
-                serverResources.push({ ...resource, name: `[${serverName}] ${resource.name || resource.uri}` });
-              });
-              return serverResources; // Return resources found for this server
-            }
-          } catch (error) {
-             // Log specific errors, including timeouts
-             console.error(`[ListResources Error] Server ${params.name || uuid}:`, error instanceof Error ? error.message : String(error));
-          }
-          return []; // Return empty array on error or no resources
-        });
-
-      // Wait for all promises to settle
-      const results = await Promise.allSettled(promises);
-
-      // Aggregate results from successful promises
-      results.forEach(result => {
-         if (result.status === 'fulfilled' && Array.isArray(result.value)) {
-            allResources.push(...result.value);
-         }
+      const response = await axios.get<z.infer<typeof ListResourcesResultSchema>["resources"]>(apiUrl, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        timeout: 10000, // Add a timeout for the API call (e.g., 10 seconds)
       });
 
-      return { resources: allResources, nextCursor: request.params?.cursor }; // Assuming no pagination across servers for now
-    } catch (handlerError) {
-       // console.error("[ListResources Handler Error]", handlerError); // Keep outer error logging minimal or remove
-       // Let SDK handle error
-       throw handlerError;
+      // The API currently returns just the array, wrap it in the expected structure
+      const resources = response.data || [];
+
+      // console.error(`[Proxy - ListResources] Received ${resources.length} resources from API.`); // Debug log
+
+      // Note: Pagination across servers via the API is not implemented here.
+      // The API would need to support cursor-based pagination for this to work fully.
+      return { resources: resources, nextCursor: undefined };
+
+    } catch (error: any) {
+      const errorMessage = axios.isAxiosError(error)
+        ? `API Error (${error.response?.status}): ${error.message}`
+        : error instanceof Error
+        ? error.message
+        : "Unknown error fetching resources from API";
+      console.error("[ListResources Handler Error]", errorMessage);
+      // Let SDK handle error formatting
+      throw new Error(`Failed to list resources: ${errorMessage}`);
     }
   });
 
-  // Read Resource Handler - Simplified to only proxy (No changes needed here for timeout)
+  // Read Resource Handler - Simplified to only proxy
+  // WARNING: This handler will likely fail now because resourceToClient is no longer populated.
+  // It needs to be refactored to proxy the read request to the correct downstream server,
+  // potentially by calling a new API endpoint on pluggedin-app or by re-establishing a session.
+  // Leaving it as is for now to focus on ListResources.
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
-
+    console.error(`[ReadResource Handler] Received request for URI: ${uri}. This handler needs refactoring as resourceToClient is no longer populated.`);
     // Handle regular resources by finding the client mapped during ListResources
-    const clientForResource = resourceToClient[uri];
-    if (!clientForResource) {
-       throw new Error(`Unknown resource: ${uri}`); // Throw error for SDK
-    }
-    try {
-      // Ensure the proxied request uses the original URI
-      // Consider adding a timeout here as well if reading can be slow
-      return await clientForResource.client.request(
-        { method: "resources/read", params: { uri, _meta: request.params._meta } },
-        ReadResourceResultSchema
-      );
-    } catch (error) {
-      throw error; // Re-throw for SDK
-    }
+    // const clientForResource = resourceToClient[uri]; // This map is no longer populated
+    // if (!clientForResource) {
+    //    throw new Error(`Unknown resource or mapping not found: ${uri}`); // Throw error for SDK
+    // }
+    // try {
+    //   // Ensure the proxied request uses the original URI
+    //   // Consider adding a timeout here as well if reading can be slow
+    //   return await clientForResource.client.request(
+    //     { method: "resources/read", params: { uri, _meta: request.params?._meta } },
+    //     ReadResourceResultSchema
+    //   );
+    // } catch (error) {
+    //   throw error; // Re-throw for SDK
+    // }
+    throw new Error(`ReadResource handler needs refactoring to work without resourceToClient mapping. Cannot read URI: ${uri}`);
   });
 
   // List Resource Templates Handler - Returns empty list as proxy doesn't handle them directly
