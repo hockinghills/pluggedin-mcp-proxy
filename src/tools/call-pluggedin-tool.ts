@@ -9,16 +9,16 @@ import { getMcpServers } from "../fetch-pluggedinmcp.js";
 import { getSessionKey, sanitizeName, getPluggedinMCPApiKey } from "../utils.js"; // Import getPluggedinMCPApiKey
 import { getSession } from "../sessions.js";
 import { ConnectedClient } from "../client.js"; // Assuming ConnectedClient holds the session/client
-import {
-  getProfileCapabilities,
-  ProfileCapability,
-} from "../fetch-capabilities.js";
-import { getInactiveTools, ToolParameters } from "../fetch-tools.js"; // Keep for inactive check
-import { container } from "../di-container.js";
-import { Logger } from "../logging.js";
-import { ToolPlugin, pluginRegistry } from "../plugin-system.js";
+// import {
+//   getProfileCapabilities,
+//   ProfileCapability,
+// } from "../fetch-capabilities.js"; // Removed unused import
+// import { getInactiveTools, ToolParameters } from "../fetch-tools.js"; // Removed unused import
+// import { container } from "../di-container.js"; // Removed DI
+// import { Logger } from "../logging.js"; // Removed Logger
+// import { ToolPlugin, pluginRegistry } from "../plugin-system.js"; // Removed Plugin System
 import { ToolExecutionResult } from "../types.js";
-import { getSessionKeyForTool } from '../tool-registry.js'; // Import the registry query function
+// import { getSessionKeyForTool } from '../tool-registry.js'; // Removed Tool Registry
 
 const toolName = "tool_call"; // Renamed to match veyrax-mcp convention
 const toolDescription = `
@@ -43,59 +43,19 @@ const CallPluggedinToolSchema = z.object({
     ),
 });
 
-// Get logger instance from the DI container
-const logger = container.get<Logger>('logger');
+// Removed logger
 
 /**
- * ToolPlugin implementation for the 'tool_call' static tool.
+ * Implementation for the 'tool_call' static tool.
  * Proxies a tool call to the appropriate downstream MCP server based on the prefixed tool name.
  */
-export class CallPluggedinToolTool implements ToolPlugin {
+// Removed ToolPlugin interface implementation
+export class CallPluggedinToolTool {
   readonly name = toolName;
   readonly description = toolDescription;
   readonly inputSchema = CallPluggedinToolSchema;
 
-  /**
-   * Finds the active downstream client session responsible for handling the specified prefixed tool name.
-   * Uses the toolOriginMap populated by the capability reporting process.
-   * @param prefixedToolName - The tool name including the server prefix (e.g., 'github__create_issue').
-   * @returns A promise resolving to the ConnectedClient instance or null if not found.
-   * @private
-   */
-  private static async findClientForTool(
-    prefixedToolName: string
-  ): Promise<ConnectedClient | null> {
-    logger.debug(`Finding client for tool: ${prefixedToolName}`);
-    const sessionKey = getSessionKeyForTool(prefixedToolName);
-
-    if (!sessionKey) {
-      logger.warn(`No origin session key found in registry for tool: ${prefixedToolName}. Cache might be stale. Trigger refresh_tools.`);
-      return null;
-    }
-
-    // Attempt to get the session using the key from the map
-    // We don't need uuid/params here as getSession should retrieve by key if it exists
-    // Note: This assumes the session corresponding to sessionKey is still active in the _sessions map in sessions.ts
-    // If sessions can expire independently, this might need adjustment.
-    const session = await getSession(sessionKey, '', {} as any); // Pass dummy uuid/params as they are not used for lookup by key
-
-    if (!session) {
-       logger.warn(`Session not found for key "${sessionKey}" associated with tool "${prefixedToolName}". Cache might be stale.`);
-       return null;
-    }
-
-    // Optional: Add back the inactive check if needed, though ideally the registry
-    // should only contain active tools if populated correctly.
-    // const profileCapabilities = await getProfileCapabilities();
-    // if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
-    //    const inactiveTools = await getInactiveTools();
-    //    // Need to extract original tool name and uuid from sessionKey or map to check inactivity
-    //    // This adds complexity back, suggesting the registry should ideally handle active state.
-    // }
-
-    logger.debug(`Found session key "${sessionKey}" for tool "${prefixedToolName}"`);
-    return session;
-  }
+  // Removed findClientForTool static method as it relied on removed tool-registry
 
   /**
    * Executes the 'tool_call' logic.
@@ -111,66 +71,54 @@ export class CallPluggedinToolTool implements ToolPlugin {
   ): Promise<ToolExecutionResult> {
     const { tool_name: prefixedToolName, arguments: toolArgs } = args;
 
-    // Use the optimized findClientForTool which no longer needs meta for lookup
-    const clientForTool = await CallPluggedinToolTool.findClientForTool(
-      prefixedToolName
-    );
+    // Find the client session directly
+    let clientForTool: ConnectedClient | null = null;
+    let originalToolName: string | null = null;
+    let serverName = "unknown"; // Default server name
 
-    if (!clientForTool) {
-      // Check if the reason was a missing API key (findClientForTool returns null in that case)
-      const apiKey = getPluggedinMCPApiKey();
-      if (!apiKey) {
-       // Return error structure matching ToolExecutionResult
-       return {
-         isError: true,
-         content: [{ type: "text", text: "Configuration Error: PluggedinMCP API Key is missing. Please configure the server." }],
-       };
-     }
-
-      // Otherwise, the tool was genuinely not found or inactive
-      const profileCapabilities = await getProfileCapabilities();
-      if (profileCapabilities.includes(ProfileCapability.TOOLS_MANAGEMENT)) {
-        // Re-fetch inactive tools to give a specific error if possible
-        const inactiveTools = await getInactiveTools();
-        const serverParams = await getMcpServers();
-        for (const [uuid, params] of Object.entries(serverParams)) {
-           const serverName = params.name || uuid; // Use params.name if available
-           const originalToolName = prefixedToolName.startsWith(`${sanitizeName(serverName)}__`)
-             ? prefixedToolName.substring(sanitizeName(serverName).length + 2)
-             : null;
-           if (originalToolName && inactiveTools[`${uuid}:${originalToolName}`]) {
-             throw new Error(`Tool is inactive: ${prefixedToolName}`);
+    try {
+      const serverParamsMap = await getMcpServers(); // Fetch server configs
+      for (const [uuid, params] of Object.entries(serverParamsMap)) {
+        serverName = params.name || uuid; // Use name or fallback to uuid
+        const prefix = `${sanitizeName(serverName)}__`;
+        if (prefixedToolName.startsWith(prefix)) {
+          originalToolName = prefixedToolName.substring(prefix.length);
+          const sessionKey = getSessionKey(uuid, params);
+          // Attempt to get the session
+          const session = await getSession(sessionKey, uuid, params);
+          if (session) {
+             clientForTool = session;
+             break; // Found the matching server and session
+           } else {
+              // logger.warn(`Session not found for server ${serverName} (key: ${sessionKey})`); // Removed logging
+              // Continue searching other servers in case of naming conflicts or stale data
            }
          }
        }
-       // Return error structure matching ToolExecutionResult
-       // Updated error message to reflect potential cache staleness
-       return {
-         isError: true,
-         content: [{ type: "text", text: `Error: Tool not found or origin unknown: ${prefixedToolName}. Try running 'refresh_tools'.` }],
+     } catch (error) {
+        // logger.error("Error finding client session for tool call:", error); // Removed logging
+        return {
+          isError: true,
+         content: [{ type: "text", text: `Error finding origin server for tool: ${prefixedToolName}` }],
        };
     }
 
-    // Extract the original tool name
-    const serverName = clientForTool.client.getServerVersion()?.name || "";
-    const originalToolName = prefixedToolName.substring(
-      sanitizeName(serverName).length + 2
-    );
-
-    if (!originalToolName) {
-       // Return error structure matching ToolExecutionResult
-       return {
-         isError: true,
-         content: [{ type: "text", text: `Error: Could not extract original tool name from prefixed name: ${prefixedToolName}` }],
+     // Handle cases where client or original name wasn't found
+     if (!clientForTool || !originalToolName) {
+        // logger.warn(`Could not find active session or parse original name for tool: ${prefixedToolName}`); // Removed logging
+        return {
+          isError: true,
+         content: [{ type: "text", text: `Error: Tool not found or origin server unavailable: ${prefixedToolName}` }],
        };
     }
 
-    try {
-      logger.debug(
-        `Proxying call to tool '${originalToolName}' on server '${serverName}' with args:`,
-        toolArgs
-      );
-      // Call the actual tool on the downstream client
+     // Proceed with the tool call using the found client and original name
+     try {
+       // logger.debug( // Removed logging
+       //   `Proxying call to tool '${originalToolName}' on server '${serverName}' with args:`,
+       //   toolArgs
+       // );
+       // Call the actual tool on the downstream client
       return await clientForTool.client.request(
         {
           method: "tools/call",
@@ -185,13 +133,13 @@ export class CallPluggedinToolTool implements ToolPlugin {
        CompatibilityCallToolResultSchema // Use the schema that expects content/isError
      ) as ToolExecutionResult; // Explicitly cast the result
      // The result from client.request should match ToolExecutionResult structure after type update
-     // return result; // Removed extraneous return
-   } catch (error) {
-     logger.error(
-       `Error calling tool '${originalToolName}' through ${serverName}:`,
-       error
-     );
-     // Return error structure matching ToolExecutionResult
+      // return result; // Removed extraneous return
+    } catch (error) {
+      // logger.error( // Removed logging
+      //   `Error calling tool '${originalToolName}' through ${serverName}:`,
+      //   error
+      // );
+      // Return error structure matching ToolExecutionResult
      const errorMessage = error instanceof Error ? error.message : String(error);
      return {
        isError: true,
@@ -201,5 +149,4 @@ export class CallPluggedinToolTool implements ToolPlugin {
  }
 }
 
-// Register the plugin instance with the registry
-pluginRegistry.register(new CallPluggedinToolTool());
+// Removed plugin registration

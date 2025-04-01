@@ -6,13 +6,12 @@ import {
   connectPluggedinMCPClient,
 } from "./client.js";
 import { getSessionKey } from "./utils.js";
-import { container } from './di-container.js'; // Import container
-import { Logger } from './logging.js'; // Import Logger type
+// import { container } from './di-container.js'; // Removed DI container
+// import { Logger } from './logging.js'; // Removed Logger type
 
 const _sessions: Record<string, ConnectedClient> = {};
 
-// Get logger instance
-const logger = container.get<Logger>('logger');
+// Removed logger
 
 export const getSession = async (
   sessionKey: string,
@@ -60,7 +59,7 @@ export const initSessions = async (): Promise<void> => {
         await getSession(sessionKey, uuid, params);
       } catch (error) {
         // Log errors during initial session establishment attempt
-        logger.error(`Failed to initialize session for ${params.name || uuid} during initSessions:`, error);
+        // logger.error(`Failed to initialize session for ${params.name || uuid} during initSessions:`, error); // Removed logging
       }
     })
   );

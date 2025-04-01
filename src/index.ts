@@ -3,8 +3,8 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./mcp-proxy.js";
 import { Command } from "commander";
-import { reportAllCapabilities } from "./report-tools.js"; // Renamed import
-import { cleanupAllSessions } from "./sessions.js";
+// import { reportAllCapabilities } from "./report-tools.js"; // Removed reporting
+// import { cleanupAllSessions } from "./sessions.js"; // Cleanup handled by createServer return
 
 const program = new Command();
 
@@ -19,10 +19,7 @@ program
     "--pluggedin-api-base-url <url>",
     "Base URL for PluggedinMCP API (can also be set via PLUGGEDIN_API_BASE_URL env var)"
   )
-  .option(
-    "--report",
-    "Fetch all MCPs, initialize clients, and report tools to PluggedinMCP API"
-  )
+  // Removed --report option
   .parse(process.argv);
 
 const options = program.opts();
@@ -36,15 +33,10 @@ if (options.pluggedinApiBaseUrl) {
 }
 
 async function main() {
-  // If --report flag is set, run the reporting function instead of starting the server
-  if (options.report) {
-    await reportAllCapabilities(); // Use renamed function
-    await cleanupAllSessions();
-    return;
-  }
+  // Removed --report flag handling
 
   try {
-    // First discover and report all tools during normal startup
+    // Removed initial tool discovery/reporting during startup
     // console.log("Starting initial tool discovery..."); // REMOVED - Cannot log to stdout
     // await reportAllTools(); // REMOVED - This was causing slow startup/timeouts
     // console.log("Initial tool discovery completed"); // REMOVED - Cannot log to stdout

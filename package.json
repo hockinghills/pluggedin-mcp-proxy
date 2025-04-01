@@ -7,8 +7,7 @@
     "watch": "tsc --watch",
     "inspector": "dotenv -e .env.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY} -e PLUGGEDIN_API_BASE_URL=${PLUGGEDIN_API_BASE_URL}",
     "inspector:prod": "dotenv -e .env.production.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY}",
-    "report": "dotenv -e .env.local -- node dist/index.js --report",
-    "test": "jest"
+    "report": "dotenv -e .env.local -- node dist/index.js --report"
   },
   "repository": {
     "type": "git",
@@ -28,12 +27,9 @@
     "zod-to-json-schema": "^3.24.5"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.14",
     "@types/node": "^22.13.4",
     "dotenv-cli": "^8.0.0",
-    "jest": "^29.7.0",
     "shx": "^0.3.4",
-    "ts-jest": "^29.3.0",
     "typescript": "^5.7.3"
   },
   "type": "module",

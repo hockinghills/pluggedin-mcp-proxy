@@ -17,19 +17,13 @@ import { getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "../utils.js"; 
 // } from "../fetch-capabilities.js"; // No longer needed
 import axios from "axios"; // Import axios
 // import { logger } from "../logging.js"; // No longer needed, get from container
-import { Cache } from "../cache.js";
-import { container } from "../di-container.js"; // Import the DI container
-import { Logger } from "../logging.js"; // Import Logger type for casting
-import { ToolPlugin, pluginRegistry } from "../plugin-system.js"; // Import plugin system
+// import { Cache } from "../cache.js"; // Removed Cache
+// import { container } from "../di-container.js"; // Removed DI container
+// import { Logger } from "../logging.js"; // Removed Logger type
+// import { ToolPlugin, pluginRegistry } from "../plugin-system.js"; // Removed Plugin System
 import { ToolExecutionResult } from "../types.js"; // Import execution result type
-// Define the structure for cache entries
-interface ToolsCacheEntry {
-  value: string; // JSON stringified list of tool names
-  expiresAt: number;
-}
 
-// Define TTL constant (1 hour)
-const TOOLS_CACHE_TTL_MS = 3600000;
+// Removed Cache related definitions
 
 const toolName = "get_tools";
 const toolDescription = `
@@ -40,10 +34,8 @@ Requires a valid PluggedinMCP API key configured in the environment.
 
 const GetPluggedinToolsSchema = z.object({});
 
-// Get logger and cache instances from the DI container
-const logger = container.get<Logger>('logger');
-// Update cache type to use the new entry structure
-const toolsCache = container.get<Cache<ToolsCacheEntry>>('toolsCache');
+// Removed logger
+// Removed Cache instance
 
 /**
  * Helper function to fetch server names from the pluggedin-app API.
@@ -55,7 +47,7 @@ const toolsCache = container.get<Cache<ToolsCacheEntry>>('toolsCache');
 async function _fetchServerNames(apiBaseUrl: string, apiKey: string): Promise<Record<string, string>> {
   const serverNames: Record<string, string> = {};
   try {
-    logger.debug("Fetching server names for tool prefixing...");
+    // logger.debug("Fetching server names for tool prefixing..."); // Removed logging
     const serversResponse = await axios.get(
       `${apiBaseUrl}/api/mcp-servers`, // Assuming this endpoint exists
       { headers: { Authorization: `Bearer ${apiKey}` } }
@@ -66,44 +58,32 @@ async function _fetchServerNames(apiBaseUrl: string, apiKey: string): Promise<Re
           serverNames[uuid] = serverData.name;
         }
       });
-      logger.debug(`Fetched ${Object.keys(serverNames).length} server names.`);
+      // logger.debug(`Fetched ${Object.keys(serverNames).length} server names.`); // Removed logging
     } else {
-      logger.warn("Invalid response structure from /api/mcp-servers when fetching names.");
+      // logger.warn("Invalid response structure from /api/mcp-servers when fetching names."); // Removed logging
     }
   } catch (serverFetchError) {
-    logger.error("Error fetching server names for prefixing:", serverFetchError);
+    // logger.error("Error fetching server names for prefixing:", serverFetchError); // Removed logging
     // Proceed without prefixing if server names cannot be fetched, returning empty map
   }
   return serverNames;
 }
 
 /**
- * ToolPlugin implementation for the 'get_tools' static tool.
- * Fetches the list of available proxied tools (names only) from the pluggedin-app API cache.
+ * Implementation for the 'get_tools' static tool.
+ * Fetches the list of available proxied tools from the pluggedin-app API.
  */
-export class GetPluggedinToolsTool implements ToolPlugin {
+// Removed ToolPlugin interface implementation
+export class GetPluggedinToolsTool {
   readonly name = toolName;
   readonly description = toolDescription;
   readonly inputSchema = GetPluggedinToolsSchema;
 
-  /**
-   * Invalidates the cache entry for the current API key.
-   * Intended to be called by the 'refresh_tools' plugin.
-   */
-  static invalidateCache(): void {
-    const apiKey = getPluggedinMCPApiKey();
-    if (apiKey) {
-      const cacheKey = `tools:${apiKey}`;
-      logger.info(`Invalidating tools cache for key: ${cacheKey}`);
-      toolsCache.invalidate(cacheKey);
-    } else {
-       logger.warn("Cannot invalidate tools cache: API key is missing.");
-    }
-  }
+  // Removed static invalidateCache method
 
   /**
    * Executes the 'get_tools' logic.
-   * Checks the cache first, then fetches from the API if necessary.
+   * Always fetches tools directly from the API.
    * Prefixes tool names with their server names (fetched separately).
    * @param args - Validated input arguments (empty object for this tool).
    * @param meta - Optional request metadata (not used by this tool).
@@ -118,7 +98,7 @@ export class GetPluggedinToolsTool implements ToolPlugin {
     const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
     if (!apiKey || !apiBaseUrl) {
-      logger.error("PLUGGEDIN_API_KEY or PLUGGEDIN_API_BASE_URL is missing for get_tools.");
+      // logger.error("PLUGGEDIN_API_KEY or PLUGGEDIN_API_BASE_URL is missing for get_tools."); // Removed logging
       // Return error structure matching ToolExecutionResult
       return {
         isError: true,
@@ -126,27 +106,12 @@ export class GetPluggedinToolsTool implements ToolPlugin {
       };
     }
 
-    const cacheKey = `tools:${apiKey}`;
+    // Removed cache check logic
 
-    // 1. Check cache first
-    const cachedEntry = toolsCache.get(cacheKey);
-    if (cachedEntry) {
-      // Validate expiration using the logic from the updated Cache class (which already does this)
-      // The Cache.get() method now returns null if expired, so this check is implicitly handled.
-      logger.debug("Returning cached tool names.");
-      // Return success structure matching ToolExecutionResult
-      return {
-        content: [{ type: "text", text: cachedEntry.value }], // Return the value from the entry
-      };
-      // Note: The explicit Date.now() < cachedEntry.expiresAt check is redundant
-      // because the updated Cache.get() handles expiration internally.
-      // Keeping the logic simple here.
-    }
-
-    logger.debug("Tools not found in cache, fetching from API...");
+    // logger.debug("Fetching tools from API..."); // Removed logging
 
     try {
-      // 2. Fetch tools from API if not cached
+      // Fetch tools directly from API
       const response = await axios.get(
         `${apiBaseUrl}/api/tools`, // Endpoint that returns all tools for the profile
         {
@@ -158,7 +123,7 @@ export class GetPluggedinToolsTool implements ToolPlugin {
 
       // Check if the response structure is as expected
       if (!response.data || !Array.isArray(response.data.results)) {
-        logger.error("Invalid response structure received from /api/tools:", response.data);
+        // logger.error("Invalid response structure received from /api/tools:", response.data); // Removed logging
         // Return error structure matching ToolExecutionResult
         return {
           isError: true,
@@ -168,35 +133,48 @@ export class GetPluggedinToolsTool implements ToolPlugin {
 
       // The API returns tool objects, we need to extract the names
       // Assuming the API returns objects with a 'name' and 'mcp_server_uuid'
-      // We also need the server name for prefixing, which might require another API call or adjustment to /api/tools response
+      // We now receive full tool details including description and toolSchema
       
-      // Fetch server names using the helper function
+      // Fetch server names using the helper function for grouping/keying
       const serverNames = await _fetchServerNames(apiBaseUrl, apiKey);
+      const sanitize = (name: string) => name.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
 
-      const toolsFromApi: Array<{ name: string; mcp_server_uuid: string; description?: string }> = response.data.results;
+      // Define the expected structure from the API based on the previous change
+      const toolsFromApi: Array<{
+        name: string;
+        mcp_server_uuid: string;
+        description?: string | null; // Allow null description
+        toolSchema?: any; // JSON schema object
+        status: string; // Assuming status is returned
+      }> = response.data.results;
 
-      // Map to prefixed names
-      const toolNames = toolsFromApi.map(tool => {
-         const serverName = serverNames[tool.mcp_server_uuid] || tool.mcp_server_uuid; // Fallback to UUID
-         // Apply the same prefixing logic used during discovery/reporting
-         // Assuming sanitizeName is available or reimplemented if needed
-         const sanitize = (name: string) => name.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
-         return `${sanitize(serverName)}__${tool.name}`;
+      // Build the structured tool object
+      const structuredTools: Record<string, Record<string, any>> = {};
+
+      toolsFromApi.forEach(tool => {
+        const serverNameKey = sanitize(serverNames[tool.mcp_server_uuid] || tool.mcp_server_uuid); // Use sanitized name or UUID as key
+
+        if (!structuredTools[serverNameKey]) {
+          structuredTools[serverNameKey] = {};
+        }
+
+        // Structure similar to the Linear example provided by the user
+        // Note: MCP SDK Tool type might be slightly different, adapt as needed
+        structuredTools[serverNameKey][tool.name] = {
+          type: "function", // Assuming all are functions for now
+          function: {
+            name: tool.name,
+            description: tool.description ?? `Tool ${tool.name} from server ${serverNameKey}`, // Provide default description
+            parameters: tool.toolSchema || { type: "object", properties: {} }, // Use toolSchema or default empty object
+            // Add strict: true if needed, based on MCP spec or desired behavior
+          }
+        };
       });
 
-      // Return the stringified list of prefixed tool names
-      const resultString = JSON.stringify(toolNames, null, 2);
+      // Return the stringified structured tool object
+      const resultString = JSON.stringify({ tools: structuredTools }, null, 2); // Wrap in a top-level "tools" key like the example
 
-      // 3. Store the fetched result in the cache using the CacheEntry structure
-      logger.debug(`Caching ${toolNames.length} tool names.`);
-      // Pass the full ToolsCacheEntry object. The Cache.set method will use its internal
-      // logic to calculate the actual expiresAt for storage based on the TTL,
-      // but TypeScript requires the object structure to match. We provide a placeholder.
-      toolsCache.set(cacheKey, {
-        value: resultString,
-        expiresAt: 0 // Placeholder, Cache.set calculates the real one internally
-      });
-
+      // Removed caching logic
 
       // Return success structure matching ToolExecutionResult
       return {
@@ -204,7 +182,7 @@ export class GetPluggedinToolsTool implements ToolPlugin {
       };
 
     } catch (error) {
-      logger.error("Error fetching tools via /api/tools:", error);
+      // logger.error("Error fetching tools via /api/tools:", error); // Removed logging
       // Return error structure matching ToolExecutionResult
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -215,5 +193,4 @@ export class GetPluggedinToolsTool implements ToolPlugin {
   }
 }
 
-// Register the plugin instance with the registry
-pluginRegistry.register(new GetPluggedinToolsTool());
+// Removed plugin registration

@@ -5,16 +5,15 @@ import {
   getPluggedinMCPApiKey,
 } from "./utils.js";
 // import { logger } from "./logging.js"; // No longer needed, get from container
-import { container } from "./di-container.js"; // Import the DI container
-import { Logger } from "./logging.js"; // Import Logger type for casting
+// import { container } from "./di-container.js"; // Removed DI container
+// import { Logger } from "./logging.js"; // Removed Logger type
 import { ServerParameters } from "./types.js"; // Import ServerParameters type
 
 let _mcpServersCache: Record<string, ServerParameters> | null = null;
 let _mcpServersCacheTimestamp: number = 0;
 const CACHE_TTL_MS = 1000; // 1 second cache TTL
 
-// Get logger instance from the DI container
-const logger = container.get<Logger>('logger');
+// Removed logger
 
 export async function getMcpServers(
   forceRefresh: boolean = false
@@ -34,9 +33,9 @@ export async function getMcpServers(
     const apiBaseUrl = getPluggedinMCPApiBaseUrl();
 
     if (!apiKey || !apiBaseUrl) { // Also check apiBaseUrl
-      logger.error(
-        "PLUGGEDIN_API_KEY or PLUGGEDIN_API_BASE_URL is not set. Cannot fetch MCP servers."
-      );
+      // logger.error( // Removed logging
+      //   "PLUGGEDIN_API_KEY or PLUGGEDIN_API_BASE_URL is not set. Cannot fetch MCP servers."
+      // );
       // Return the last known cache if available, otherwise empty object
       return _mcpServersCache || {};
     }
@@ -67,9 +66,9 @@ export async function getMcpServers(
       } else if (params.type === "SSE") {
         // For SSE servers, ensure url is present
         if (!params.url) {
-          logger.warn(
-            `SSE server ${params.uuid} (${params.name}) is missing url field, skipping`
-          );
+          // logger.warn( // Removed logging
+          //   `SSE server ${params.uuid} (${params.name}) is missing url field, skipping`
+          // );
           continue;
         }
       }
@@ -82,13 +81,13 @@ export async function getMcpServers(
 
     _mcpServersCache = serverDict;
     _mcpServersCacheTimestamp = currentTime;
-    logger.debug(`Fetched and cached ${Object.keys(serverDict).length} MCP server configurations.`);
+    // logger.debug(`Fetched and cached ${Object.keys(serverDict).length} MCP server configurations.`); // Removed logging
     return serverDict;
   } catch (error: any) { // Add type to error
-    logger.error("Failed to fetch MCP servers from API:", error.message || error);
+    // logger.error("Failed to fetch MCP servers from API:", error.message || error); // Removed logging
     // Return the last known cache if available on error, otherwise empty object
     if (_mcpServersCache !== null) {
-      logger.warn("Returning stale MCP server cache due to fetch error.");
+      // logger.warn("Returning stale MCP server cache due to fetch error."); // Removed logging
       return _mcpServersCache;
     }
     return {};
