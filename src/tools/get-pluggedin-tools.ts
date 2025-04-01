@@ -148,32 +148,30 @@ export class GetPluggedinToolsTool {
         status: string; // Assuming status is returned
       }> = response.data.results;
 
-      // Build the structured tool object
-      const structuredTools: Record<string, Record<string, any>> = {};
+      // Build a flattened tool object without server prefixes
+      const flattenedTools: Record<string, any> = {};
 
       toolsFromApi.forEach(tool => {
-        const serverNameKey = sanitize(serverNames[tool.mcp_server_uuid] || tool.mcp_server_uuid); // Use sanitized name or UUID as key
-
-        if (!structuredTools[serverNameKey]) {
-          structuredTools[serverNameKey] = {};
-        }
-
-        // Structure similar to the Linear example provided by the user
-        // Note: MCP SDK Tool type might be slightly different, adapt as needed
-        structuredTools[serverNameKey][tool.name] = {
-          type: "function", // Assuming all are functions for now
+        // Store the server UUID in a hidden field for the tool_call function to use
+        const serverUuid = tool.mcp_server_uuid;
+        
+        // Use just the tool name as the key without any server prefix
+        flattenedTools[tool.name] = {
+          type: "function",
           function: {
             name: tool.name,
-            description: tool.description ?? `Tool ${tool.name} from server ${serverNameKey}`, // Provide default description
-            parameters: tool.toolSchema || { type: "object", properties: {} }, // Use toolSchema or default empty object
-            // Add strict: true if needed, based on MCP spec or desired behavior
+            description: tool.description ?? `Tool ${tool.name}`,
+            parameters: tool.toolSchema || { type: "object", properties: {} },
+            // Add a hidden field with the server UUID that won't be visible in the UI
+            // but can be used by the tool_call function
+            _serverUuid: serverUuid
           }
         };
       });
 
-      // Return the stringified structured tool object
+      // Return the stringified flattened tool object
       // Don't wrap in a top-level "tools" key to avoid the empty {} issue
-      const resultString = JSON.stringify(structuredTools, null, 2);
+      const resultString = JSON.stringify(flattenedTools, null, 2);
 
       // Removed caching logic
 

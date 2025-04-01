@@ -6,7 +6,8 @@ import {
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getMcpServers } from "../fetch-pluggedinmcp.js";
-import { getSessionKey, sanitizeName, getPluggedinMCPApiKey } from "../utils.js"; // Import getPluggedinMCPApiKey
+import { getSessionKey, sanitizeName, getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "../utils.js"; // Import API utils
+import axios from "axios"; // Import axios
 import { getSession } from "../sessions.js";
 import { ConnectedClient } from "../client.js"; // Assuming ConnectedClient holds the session/client
 // import {
@@ -69,98 +70,145 @@ export class CallPluggedinToolTool {
     args: z.infer<typeof CallPluggedinToolSchema>,
     meta?: any
   ): Promise<ToolExecutionResult> {
-    const { tool_name: prefixedToolName, arguments: toolArgs } = args;
+    const { tool_name: toolName, arguments: toolArgs } = args;
 
     // Find the client session directly
     let clientForTool: ConnectedClient | null = null;
-    let originalToolName: string | null = null;
     let serverName = "unknown"; // Default server name
+    let serverUuid: string | null = null;
 
     try {
-      const serverParamsMap = await getMcpServers(); // Fetch server configs
-      for (const [uuid, params] of Object.entries(serverParamsMap)) {
-        serverName = params.name || uuid; // Use name or fallback to uuid
+      // First, check if the tool arguments contain a _serverUuid field
+      // This would be the case if the tool was called directly from the get_tools response
+      if (toolArgs && '_serverUuid' in toolArgs) {
+        serverUuid = toolArgs._serverUuid;
+        // Remove the _serverUuid field from the arguments before passing to the downstream server
+        delete toolArgs._serverUuid;
+      }
+      
+      // If we don't have a serverUuid from the arguments, try to get it from the API
+      if (!serverUuid) {
+        // Fetch tools from the API to find the server UUID for this tool
+        const apiKey = getPluggedinMCPApiKey();
+        const apiBaseUrl = getPluggedinMCPApiBaseUrl();
         
-        // Check for both UUID prefix and sanitized server name prefix
-        const uuidPrefix = `${uuid}__`;
-        const namePrefix = `${sanitizeName(serverName)}__`;
+        if (apiKey && apiBaseUrl) {
+          try {
+            const response = await axios.get(
+              `${apiBaseUrl}/api/tools`,
+              {
+                headers: {
+                  Authorization: `Bearer ${apiKey}`,
+                },
+              }
+            );
+            
+            if (response.data && Array.isArray(response.data.results)) {
+              // Find the tool with the matching name
+              const matchingTool = response.data.results.find((tool: any) => tool.name === toolName);
+              if (matchingTool) {
+                serverUuid = matchingTool.mcp_server_uuid;
+              }
+            }
+          } catch (error) {
+            // Ignore API errors and fall back to the old method
+          }
+        }
+      }
+      
+      // If we have a serverUuid, get the server params and session
+      if (serverUuid) {
+        const serverParamsMap = await getMcpServers(); // Fetch server configs
+        const params = serverParamsMap[serverUuid];
         
-        // First check if the tool name starts with the UUID prefix
-        if (prefixedToolName.startsWith(uuidPrefix)) {
-          originalToolName = prefixedToolName.substring(uuidPrefix.length);
+        if (params) {
+          serverName = params.name || serverUuid;
+          const sessionKey = getSessionKey(serverUuid, params);
+          // Attempt to get the session
+          const session = await getSession(sessionKey, serverUuid, params);
+          if (session) {
+            clientForTool = session;
+          }
+        }
+      }
+      
+      // If we still don't have a client, fall back to the old method of checking all servers
+      if (!clientForTool) {
+        const serverParamsMap = await getMcpServers(); // Fetch server configs
+        for (const [uuid, params] of Object.entries(serverParamsMap)) {
+          serverName = params.name || uuid;
           const sessionKey = getSessionKey(uuid, params);
           // Attempt to get the session
           const session = await getSession(sessionKey, uuid, params);
           if (session) {
-             clientForTool = session;
-             break; // Found the matching server and session
-           }
+            // Try to check if this server has the tool
+            try {
+              const toolsResponse = await session.client.request(
+                { method: "tools/list", params: {} },
+                ListToolsResultSchema
+              );
+              
+              if (toolsResponse.tools.some((tool: Tool) => tool.name === toolName)) {
+                clientForTool = session;
+                break; // Found the matching server and session
+              }
+            } catch (error) {
+              // Ignore errors and continue to the next server
+            }
+          }
         }
-        // Then check if it starts with the sanitized name prefix
-        else if (prefixedToolName.startsWith(namePrefix)) {
-          originalToolName = prefixedToolName.substring(namePrefix.length);
-          const sessionKey = getSessionKey(uuid, params);
-          // Attempt to get the session
-          const session = await getSession(sessionKey, uuid, params);
-          if (session) {
-             clientForTool = session;
-             break; // Found the matching server and session
-           }
-        }
-        
-        // If neither prefix matches, continue to the next server
       }
     } catch (error) {
         // logger.error("Error finding client session for tool call:", error); // Removed logging
         return {
           isError: true,
-         content: [{ type: "text", text: `Error finding origin server for tool: ${prefixedToolName}` }],
-       };
+          content: [{ type: "text", text: `Error finding origin server for tool: ${toolName}` }],
+        };
     }
 
-     // Handle cases where client or original name wasn't found
-     if (!clientForTool || !originalToolName) {
-        // logger.warn(`Could not find active session or parse original name for tool: ${prefixedToolName}`); // Removed logging
+    // Handle cases where client wasn't found
+    if (!clientForTool) {
+        // logger.warn(`Could not find active session for tool: ${toolName}`); // Removed logging
         return {
           isError: true,
-         content: [{ type: "text", text: `Error: Tool not found or origin server unavailable: ${prefixedToolName}` }],
-       };
+          content: [{ type: "text", text: `Error: Tool not found or origin server unavailable: ${toolName}` }],
+        };
     }
 
-     // Proceed with the tool call using the found client and original name
-     try {
-       // logger.debug( // Removed logging
-       //   `Proxying call to tool '${originalToolName}' on server '${serverName}' with args:`,
-       //   toolArgs
-       // );
-       // Call the actual tool on the downstream client
+    // Proceed with the tool call using the found client
+    try {
+      // logger.debug( // Removed logging
+      //   `Proxying call to tool '${toolName}' on server '${serverName}' with args:`,
+      //   toolArgs
+      // );
+      // Call the actual tool on the downstream client
       return await clientForTool.client.request(
         {
           method: "tools/call",
-         params: {
-           name: originalToolName,
-           arguments: toolArgs || {},
-           _meta: {
-             progressToken: meta?.progressToken, // Use meta here
-           },
-         },
-       },
-       CompatibilityCallToolResultSchema // Use the schema that expects content/isError
-     ) as ToolExecutionResult; // Explicitly cast the result
-     // The result from client.request should match ToolExecutionResult structure after type update
+          params: {
+            name: toolName,
+            arguments: toolArgs || {},
+            _meta: {
+              progressToken: meta?.progressToken, // Use meta here
+            },
+          },
+        },
+        CompatibilityCallToolResultSchema // Use the schema that expects content/isError
+      ) as ToolExecutionResult; // Explicitly cast the result
+      // The result from client.request should match ToolExecutionResult structure after type update
       // return result; // Removed extraneous return
     } catch (error) {
       // logger.error( // Removed logging
-      //   `Error calling tool '${originalToolName}' through ${serverName}:`,
+      //   `Error calling tool '${toolName}' through ${serverName}:`,
       //   error
       // );
       // Return error structure matching ToolExecutionResult
-     const errorMessage = error instanceof Error ? error.message : String(error);
-     return {
-       isError: true,
-       content: [{ type: "text", text: `Error executing proxied tool: ${errorMessage}` }],
-     };
-   }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error executing proxied tool: ${errorMessage}` }],
+      };
+    }
  }
 }
 
