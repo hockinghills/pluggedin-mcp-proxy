@@ -29,7 +29,7 @@ import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js";
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { readFileSync } from 'fs';
 import { createRequire } from 'module';
-import { ToolExecutionResult } from "./types.js";
+import { ToolExecutionResult, ServerParameters } from "./types.js"; // Import ServerParameters
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
@@ -272,25 +272,59 @@ export const createServer = async () => {
   // It needs to be refactored to proxy the read request to the correct downstream server,
   // potentially by calling a new API endpoint on pluggedin-app or by re-establishing a session.
   // Leaving it as is for now to focus on ListResources.
+  // Refactored Read Resource Handler - Uses API to resolve URI to server details
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
-    console.error(`[ReadResource Handler] Received request for URI: ${uri}. This handler needs refactoring as resourceToClient is no longer populated.`);
-    // Handle regular resources by finding the client mapped during ListResources
-    // const clientForResource = resourceToClient[uri]; // This map is no longer populated
-    // if (!clientForResource) {
-    //    throw new Error(`Unknown resource or mapping not found: ${uri}`); // Throw error for SDK
-    // }
-    // try {
-    //   // Ensure the proxied request uses the original URI
-    //   // Consider adding a timeout here as well if reading can be slow
-    //   return await clientForResource.client.request(
-    //     { method: "resources/read", params: { uri, _meta: request.params?._meta } },
-    //     ReadResourceResultSchema
-    //   );
-    // } catch (error) {
-    //   throw error; // Re-throw for SDK
-    // }
-    throw new Error(`ReadResource handler needs refactoring to work without resourceToClient mapping. Cannot read URI: ${uri}`);
+    const meta = request.params._meta; // Pass meta along
+
+    try {
+        const apiKey = getPluggedinMCPApiKey();
+        const baseUrl = getPluggedinMCPApiBaseUrl();
+        if (!apiKey || !baseUrl) {
+            throw new Error("Pluggedin API Key or Base URL is not configured for resource resolution.");
+        }
+
+        // 1. Call the new API endpoint to resolve the URI
+        const resolveApiUrl = `${baseUrl}/api/resolve/resource?uri=${encodeURIComponent(uri)}`;
+        console.error(`[ReadResource Handler] Resolving URI via: ${resolveApiUrl}`);
+
+        const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, { // Expect ServerParameters type
+            headers: { Authorization: `Bearer ${apiKey}` },
+            timeout: 10000, // Timeout for resolution call
+        });
+
+        const serverParams = resolveResponse.data;
+        if (!serverParams || !serverParams.uuid) {
+            throw new Error(`Could not resolve server details for URI: ${uri}`);
+        }
+
+        // 2. Get the downstream server session using resolved details
+        const sessionKey = getSessionKey(serverParams.uuid, serverParams);
+        const session = await getSession(sessionKey, serverParams.uuid, serverParams);
+
+        if (!session) {
+            throw new Error(`Session not found for server UUID: ${serverParams.uuid} handling URI: ${uri}`);
+        }
+
+        // 3. Proxy the read request to the correct downstream server
+        console.error(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
+        const result = await session.client.request(
+            { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
+            ReadResourceResultSchema
+        );
+
+        return result;
+
+    } catch (error: any) {
+        const errorMessage = axios.isAxiosError(error)
+            ? `API Error (${error.response?.status}) resolving URI ${uri}: ${error.response?.data?.error || error.message}`
+            : error instanceof Error
+            ? error.message
+            : `Unknown error reading resource URI: ${uri}`;
+        console.error("[ReadResource Handler Error]", errorMessage);
+        // Let SDK handle error formatting
+        throw new Error(`Failed to read resource ${uri}: ${errorMessage}`);
+    }
   });
 
   // List Resource Templates Handler - Returns empty list as proxy doesn't handle them directly
