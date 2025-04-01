@@ -172,7 +172,8 @@ export class GetPluggedinToolsTool {
       });
 
       // Return the stringified structured tool object
-      const resultString = JSON.stringify({ tools: structuredTools }, null, 2); // Wrap in a top-level "tools" key like the example
+      // Don't wrap in a top-level "tools" key to avoid the empty {} issue
+      const resultString = JSON.stringify(structuredTools, null, 2);
 
       // Removed caching logic
 
