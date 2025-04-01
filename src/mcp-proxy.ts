@@ -271,7 +271,6 @@ export const createServer = async () => {
   // WARNING: This handler will likely fail now because resourceToClient is no longer populated.
   // It needs to be refactored to proxy the read request to the correct downstream server,
   // potentially by calling a new API endpoint on pluggedin-app or by re-establishing a session.
-  // Leaving it as is for now to focus on ListResources.
   // Refactored Read Resource Handler - Uses API to resolve URI to server details
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
@@ -286,7 +285,7 @@ export const createServer = async () => {
 
         // 1. Call the new API endpoint to resolve the URI
         const resolveApiUrl = `${baseUrl}/api/resolve/resource?uri=${encodeURIComponent(uri)}`;
-        console.error(`[ReadResource Handler] Resolving URI via: ${resolveApiUrl}`);
+        // console.error(`[ReadResource Handler] Resolving URI via: ${resolveApiUrl}`); // Optional debug log
 
         const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, { // Expect ServerParameters type
             headers: { Authorization: `Bearer ${apiKey}` },
@@ -300,20 +299,34 @@ export const createServer = async () => {
 
         // 2. Get the downstream server session using resolved details
         const sessionKey = getSessionKey(serverParams.uuid, serverParams);
+        // Ensure session is established before proceeding
         const session = await getSession(sessionKey, serverParams.uuid, serverParams);
 
         if (!session) {
-            throw new Error(`Session not found for server UUID: ${serverParams.uuid} handling URI: ${uri}`);
+            // Attempt to re-initialize sessions if not found (might happen on proxy restart)
+            // This is a potential area for improvement (e.g., caching serverParams)
+            console.warn(`[ReadResource Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+            await initSessions(); // Re-initialize all sessions
+            const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
+            if (!refreshedSession) {
+               throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling URI: ${uri}`);
+            }
+             // Use the refreshed session
+             console.error(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
+             const result = await refreshedSession.client.request(
+                 { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
+                 ReadResourceResultSchema
+             );
+             return result;
+        } else {
+             // Use the existing session
+             console.error(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
+             const result = await session.client.request(
+                 { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
+                 ReadResourceResultSchema
+             );
+             return result;
         }
-
-        // 3. Proxy the read request to the correct downstream server
-        console.error(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
-        const result = await session.client.request(
-            { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
-            ReadResourceResultSchema
-        );
-
-        return result;
 
     } catch (error: any) {
         const errorMessage = axios.isAxiosError(error)
@@ -327,10 +340,45 @@ export const createServer = async () => {
     }
   });
 
-  // List Resource Templates Handler - Returns empty list as proxy doesn't handle them directly
+  // List Resource Templates Handler - Fetches aggregated list from Pluggedin App API
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request) => {
-    // console.error("[ListResourceTemplates Handler] Returning empty list."); // Keep console logs out
-    return { resourceTemplates: [], nextCursor: undefined };
+    try {
+      const apiKey = getPluggedinMCPApiKey();
+      const baseUrl = getPluggedinMCPApiBaseUrl();
+      if (!apiKey || !baseUrl) {
+        throw new Error("Pluggedin API Key or Base URL is not configured.");
+      }
+
+      const apiUrl = `${baseUrl}/api/resource-templates`; // New endpoint
+
+      // console.error(`[Proxy - ListResourceTemplates] Fetching from ${apiUrl}`); // Debug log
+
+      // Fetch the list of templates
+      // Assuming the API returns ResourceTemplate[] directly
+      const response = await axios.get<ResourceTemplate[]>(apiUrl, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        timeout: 10000, // Add a timeout
+      });
+
+      const templates = response.data || [];
+
+      // console.error(`[Proxy - ListResourceTemplates] Received ${templates.length} templates from API.`); // Debug log
+
+      // Wrap the array in the expected structure for the MCP response
+      return { resourceTemplates: templates, nextCursor: undefined }; // Pagination not handled
+
+    } catch (error: any) {
+      const errorMessage = axios.isAxiosError(error)
+        ? `API Error (${error.response?.status}): ${error.message}`
+        : error instanceof Error
+        ? error.message
+        : "Unknown error fetching resource templates from API";
+      console.error("[ListResourceTemplates Handler Error]", errorMessage);
+      // Let SDK handle error formatting
+      throw new Error(`Failed to list resource templates: ${errorMessage}`);
+    }
   });
 
   const cleanup = async () => {
