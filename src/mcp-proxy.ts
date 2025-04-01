@@ -218,7 +218,11 @@ export const createServer = async () => {
     }
   });
 
-  // Removed List Resource Templates Handler
+  // List Resource Templates Handler - Returns empty list as proxy doesn't handle them directly
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request) => {
+    // console.error("[ListResourceTemplates Handler] Returning empty list."); // Keep console logs out
+    return { resourceTemplates: [], nextCursor: undefined };
+  });
 
   const cleanup = async () => {
     await cleanupAllSessions();
