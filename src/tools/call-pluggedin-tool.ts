@@ -80,22 +80,37 @@ export class CallPluggedinToolTool {
       const serverParamsMap = await getMcpServers(); // Fetch server configs
       for (const [uuid, params] of Object.entries(serverParamsMap)) {
         serverName = params.name || uuid; // Use name or fallback to uuid
-        const prefix = `${sanitizeName(serverName)}__`;
-        if (prefixedToolName.startsWith(prefix)) {
-          originalToolName = prefixedToolName.substring(prefix.length);
+        
+        // Check for both UUID prefix and sanitized server name prefix
+        const uuidPrefix = `${uuid}__`;
+        const namePrefix = `${sanitizeName(serverName)}__`;
+        
+        // First check if the tool name starts with the UUID prefix
+        if (prefixedToolName.startsWith(uuidPrefix)) {
+          originalToolName = prefixedToolName.substring(uuidPrefix.length);
           const sessionKey = getSessionKey(uuid, params);
           // Attempt to get the session
           const session = await getSession(sessionKey, uuid, params);
           if (session) {
              clientForTool = session;
              break; // Found the matching server and session
-           } else {
-              // logger.warn(`Session not found for server ${serverName} (key: ${sessionKey})`); // Removed logging
-              // Continue searching other servers in case of naming conflicts or stale data
            }
-         }
-       }
-     } catch (error) {
+        }
+        // Then check if it starts with the sanitized name prefix
+        else if (prefixedToolName.startsWith(namePrefix)) {
+          originalToolName = prefixedToolName.substring(namePrefix.length);
+          const sessionKey = getSessionKey(uuid, params);
+          // Attempt to get the session
+          const session = await getSession(sessionKey, uuid, params);
+          if (session) {
+             clientForTool = session;
+             break; // Found the matching server and session
+           }
+        }
+        
+        // If neither prefix matches, continue to the next server
+      }
+    } catch (error) {
         // logger.error("Error finding client session for tool call:", error); // Removed logging
         return {
           isError: true,
