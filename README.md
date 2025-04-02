@@ -1,7 +1,7 @@
 # plugged.in MCP Proxy Server
 
 <div align="center">
-  <img src="https://via.placeholder.com/200x200?text=plugged.in" alt="plugged.in Logo" width="200" height="200">
+  <img src="https://plugged.in/_next/image?url=%2Fpluggedin-wl.png&w=256&q=75" alt="plugged.in Logo" width="256" height="75">
   <h3>The Crossroads for AI Data Exchanges</h3>
   <p>A unified interface for managing all your MCP servers</p>
 
@@ -23,10 +23,10 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 - **Multi-Server Support**: Connect both STDIO (command-line) and WebSocket (HTTP-based) MCP servers
 - **Namespace Isolation**: Keep joined MCPs separate and organized with proper prefixing
 - **Multi-Workspace Layer**: Switch between different sets of MCP configurations with one click
-- **Real-time Updates**: Dynamic updates of MCP configurations through the plugged.in App
-- **Tool Management**: Discover, report, and manage tools across all connected MCP servers
-- **Intelligent Routing**: Automatically route tool calls to the appropriate underlying MCP server
-- **Streamable HTTP Support**: Implements the latest MCP specification for streaming responses
+- **Simplified Architecture**: Streamlined codebase with improved startup time and reduced complexity
+- **API-Driven Proxy**: Fetches capabilities from plugged.in App APIs rather than direct discovery
+- **Full MCP Support**: Handles tools, resources, resource templates, and prompts
+- **Custom Instructions**: Supports server-specific instructions formatted as MCP prompts
 
 ## 🚀 Quick Start
 
@@ -164,50 +164,54 @@ sequenceDiagram
     participant PluggedinApp as plugged.in App
     participant MCPServers as Underlying MCP Servers
 
-    MCPClient ->> PluggedinMCP: Request list tools (tools/list)
-    PluggedinMCP ->> PluggedinApp: Get active server configurations
-    PluggedinApp ->> PluggedinMCP: Return server configurations
-    
-    opt If TOOLS_MANAGEMENT capability enabled
-        PluggedinMCP ->> PluggedinApp: Get inactive tool list
-        PluggedinApp ->> PluggedinMCP: Return inactive tool list
-    end
-    
-    loop For each active MCP Server
-        PluggedinMCP ->> MCPServers: Request list_tools
-        MCPServers ->> PluggedinMCP: Return list of tools
-        
-        opt If TOOLS_MANAGEMENT capability enabled
-             PluggedinMCP ->> PluggedinApp: Report discovered tools
-             PluggedinApp ->> PluggedinMCP: Report confirmation
-        end
-    end
-    
-    PluggedinMCP ->> PluggedinMCP: Aggregate & Filter tool lists
-    PluggedinMCP ->> MCPClient: Return aggregated list of active tools
+    MCPClient ->> PluggedinMCP: Request list tools/resources/prompts
+    PluggedinMCP ->> PluggedinApp: Get capabilities via API
+    PluggedinApp ->> PluggedinMCP: Return capabilities (prefixed)
 
-    MCPClient ->> PluggedinMCP: Call tool (with prefixed tool name)
-    PluggedinMCP ->> PluggedinMCP: Find target downstream server
-    PluggedinMCP ->> MCPServers: call_tool (with original tool name)
-    MCPServers ->> PluggedinMCP: Return tool response
-    PluggedinMCP ->> MCPClient: Return tool response
+    MCPClient ->> PluggedinMCP: Call tool/read resource/get prompt
+    alt Standard capability
+        PluggedinMCP ->> PluggedinApp: Resolve capability to server
+        PluggedinApp ->> PluggedinMCP: Return server details
+        PluggedinMCP ->> MCPServers: Forward request to target server
+        MCPServers ->> PluggedinMCP: Return response
+    else Custom instruction
+        PluggedinMCP ->> PluggedinApp: Get custom instruction
+        PluggedinApp ->> PluggedinMCP: Return formatted messages
+    end
+    PluggedinMCP ->> MCPClient: Return response
+
+    alt Discovery tool
+        MCPClient ->> PluggedinMCP: Call pluggedin_discover_tools
+        PluggedinMCP ->> PluggedinApp: Trigger discovery action
+        PluggedinApp ->> MCPServers: Connect and discover capabilities
+        MCPServers ->> PluggedinApp: Return capabilities
+        PluggedinApp ->> PluggedinMCP: Confirm discovery complete
+        PluggedinMCP ->> MCPClient: Return discovery result
+    end
 ```
 
 ## 🔄 Workflow
 
 1. **Configuration**: The proxy fetches server configurations from the plugged.in App
-2. **Tool Discovery**: The proxy connects to each configured MCP server and discovers available tools
-3. **Tool Reporting**: Discovered tools are reported back to the plugged.in App for management
-4. **Tool Aggregation**: All active tools are aggregated and presented to the MCP client
-5. **Request Routing**: Tool calls from the client are routed to the appropriate underlying MCP server
-6. **Response Handling**: Responses from the underlying servers are returned to the client
+2. **Capability Listing**: The proxy fetches discovered capabilities from plugged.in App APIs
+   - `tools/list`: Fetches from `/api/tools` (returns prefixed names)
+   - `resources/list`: Fetches from `/api/resources`
+   - `resource-templates/list`: Fetches from `/api/resource-templates`
+   - `prompts/list`: Fetches from `/api/prompts` and `/api/custom-instructions`, merges results
+3. **Capability Resolution**: The proxy resolves capabilities to target servers
+   - `tools/call`: Parses prefix from tool name, looks up server in internal map
+   - `resources/read`: Calls `/api/resolve/resource?uri=...` to get server details
+   - `prompts/get`: Checks for custom instruction prefix or calls `/api/resolve/prompt?name=...`
+4. **Request Routing**: Requests are routed to the appropriate underlying MCP server
+5. **Response Handling**: Responses from the underlying servers are returned to the client
 
 ## 🧩 Integration with plugged.in App
 
 The plugged.in MCP Proxy Server is designed to work seamlessly with the [plugged.in App](https://github.com/VeriTeknik/pluggedin-app), which provides:
 
 - A web-based interface for managing MCP server configurations
-- Tool discovery and management capabilities
+- Centralized capability discovery (Tools, Resources, Templates, Prompts)
+- Custom instructions management
 - Multi-workspace support for different configuration sets
 - An interactive playground for testing MCP tools
 - User authentication and API key management
