@@ -16,6 +16,7 @@ import {
   ResourceTemplate,
   CompatibilityCallToolResultSchema,
   GetPromptResultSchema,
+  PromptMessage, // Import PromptMessage
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { getMcpServers } from "./fetch-pluggedinmcp.js";
@@ -24,18 +25,21 @@ import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
 import { ConnectedClient } from "./client.js";
 import axios from "axios";
 // Removed unused imports
-import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js";
-import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js";
+// import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js"; // No longer needed?
+// import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js"; // No longer needed?
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { readFileSync } from 'fs';
 import { createRequire } from 'module';
 import { ToolExecutionResult, ServerParameters } from "./types.js"; // Import ServerParameters
+// Removed incorrect McpMessage import
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
 
 // Map to store prefixed tool name -> { originalName, serverUuid }
 const toolToServerMap: Record<string, { originalName: string; serverUuid: string; }> = {};
+// Map to store prefixed instruction name -> serverUuid
+const instructionToServerMap: Record<string, string> = {};
 
 // Removed logger
 
@@ -222,31 +226,72 @@ export const createServer = async () => {
     }
   });
 
-  // Get Prompt Handler - Resolves prompt name via API and proxies to downstream server
+  // Get Prompt Handler - Handles standard prompts (via resolve API + proxy) and custom instructions (via direct API call)
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const meta = request.params._meta;
+    const instructionPrefix = 'pluggedin_instruction_';
 
     try {
-        const apiKey = getPluggedinMCPApiKey();
-        const baseUrl = getPluggedinMCPApiBaseUrl();
-        if (!apiKey || !baseUrl) {
-            throw new Error("Pluggedin API Key or Base URL is not configured for prompt resolution.");
+      const apiKey = getPluggedinMCPApiKey();
+      const baseUrl = getPluggedinMCPApiBaseUrl();
+      if (!apiKey || !baseUrl) {
+        throw new Error("Pluggedin API Key or Base URL is not configured.");
+      }
+
+      if (name.startsWith(instructionPrefix)) {
+        // --- Handle Custom Instruction Request ---
+        console.error(`[GetPrompt Handler] Detected custom instruction prefix for: ${name}`);
+        const serverUuid = instructionToServerMap[name];
+        console.error(`[GetPrompt Handler] Looked up serverUuid from instructionToServerMap: ${serverUuid}`); // Log UUID lookup
+        if (!serverUuid) {
+           console.error(`[GetPrompt Handler] Current instructionToServerMap:`, JSON.stringify(instructionToServerMap)); // Log the map content
+          throw new Error(`Server UUID not found in map for custom instruction: ${name}. Try listing prompts again.`);
         }
 
-        // 1. Call the API endpoint to resolve the prompt name
-        // Note: Assumes prompt names are unique or we handle potential conflicts (e.g., via prefixing if needed later)
-        const resolveApiUrl = `${baseUrl}/api/resolve/prompt?name=${encodeURIComponent(name)}`;
-        // console.error(`[GetPrompt Handler] Resolving prompt name via: ${resolveApiUrl}`);
+        // Call the new app API endpoint to get instruction details
+        // This endpoint needs to be created: /api/custom-instructions/[uuid]
+        const instructionApiUrl = `${baseUrl}/api/custom-instructions/${serverUuid}`;
+        console.error(`[GetPrompt Handler] Fetching instruction details from: ${instructionApiUrl}`);
 
-        const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, {
+        try {
+          // Expecting the API to return { messages: PromptMessage[] }
+          const response = await axios.get<{ messages: PromptMessage[] }>(instructionApiUrl, {
             headers: { Authorization: `Bearer ${apiKey}` },
             timeout: 10000,
+          });
+
+          const instructionData = response.data;
+          if (!instructionData || !Array.isArray(instructionData.messages)) {
+             throw new Error(`Invalid response format from ${instructionApiUrl}`);
+          }
+
+          // Construct the GetPromptResult directly in the proxy
+          return {
+            messages: instructionData.messages,
+          } as z.infer<typeof GetPromptResultSchema>; // Ensure correct type
+
+        } catch (apiError: any) {
+           const errorMsg = axios.isAxiosError(apiError)
+              ? `API Error (${apiError.response?.status}) fetching instruction ${name}: ${apiError.response?.data?.error || apiError.message}`
+              : apiError.message;
+           throw new Error(`Failed to fetch custom instruction details: ${errorMsg}`);
+        }
+
+      } else {
+        // --- Handle Standard Prompt Request (Existing Logic) ---
+        console.error(`[GetPrompt Handler] No custom instruction prefix detected for: ${name}. Proceeding with standard prompt resolution.`);
+        // 1. Call the resolve API endpoint
+        const resolveApiUrl = `${baseUrl}/api/resolve/prompt?name=${encodeURIComponent(name)}`;
+         console.error(`[GetPrompt Handler] Calling resolve API: ${resolveApiUrl}`); // Log API call
+        const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 10000,
         });
 
         const serverParams = resolveResponse.data;
         if (!serverParams || !serverParams.uuid) {
-            throw new Error(`Could not resolve server details for prompt name: ${name}`);
+          throw new Error(`Could not resolve server details for prompt name: ${name}`);
         }
 
         // 2. Get the downstream server session
@@ -254,39 +299,35 @@ export const createServer = async () => {
         const session = await getSession(sessionKey, serverParams.uuid, serverParams);
 
         if (!session) {
-            // Attempt re-init if session not found
-            console.warn(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
-            await initSessions(); // Consider if re-initializing all is efficient
-            const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
-            if (!refreshedSession) {
-               throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling prompt: ${name}`);
-            }
-             // Use the refreshed session
-             console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
-             const result = await refreshedSession.client.request(
-                 { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
-                 GetPromptResultSchema
-             );
-             return result;
+          console.warn(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+          await initSessions();
+          const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
+          if (!refreshedSession) {
+            throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling prompt: ${name}`);
+          }
+          // Use the refreshed session
+          console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
+          return await refreshedSession.client.request(
+            { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
+            GetPromptResultSchema
+          );
         } else {
-             // Use the existing session
-             console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
-             const result = await session.client.request(
-                 { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
-                 GetPromptResultSchema
-             );
-             return result;
+          // Use the existing session
+          console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
+          return await session.client.request(
+            { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
+            GetPromptResultSchema
+          );
         }
-
+      }
     } catch (error: any) {
-        const errorMessage = axios.isAxiosError(error)
-            ? `API Error (${error.response?.status}) resolving prompt ${name}: ${error.response?.data?.error || error.message}`
-            : error instanceof Error
-            ? error.message
-            : `Unknown error getting prompt: ${name}`;
-        console.error("[GetPrompt Handler Error]", errorMessage);
-        // Let SDK handle error formatting
-        throw new Error(`Failed to get prompt ${name}: ${errorMessage}`);
+      const errorMessage = axios.isAxiosError(error)
+        ? `API Error (${error.response?.status}) resolving/getting prompt ${name}: ${error.response?.data?.error || error.message}`
+        : error instanceof Error
+        ? error.message
+        : `Unknown error getting prompt: ${name}`;
+      console.error("[GetPrompt Handler Error]", errorMessage);
+      throw new Error(`Failed to get prompt ${name}: ${errorMessage}`);
     }
   });
 
@@ -299,29 +340,51 @@ export const createServer = async () => {
         throw new Error("Pluggedin API Key or Base URL is not configured.");
       }
 
-      const apiUrl = `${baseUrl}/api/prompts`; // New endpoint
+      const promptsApiUrl = `${baseUrl}/api/prompts`;
+      const customInstructionsApiUrl = `${baseUrl}/api/custom-instructions`; // New endpoint for custom instructions
 
-      // Fetch the list of prompts
-      // Assuming the API returns McpPromptListEntry[] directly
-      const response = await axios.get<z.infer<typeof ListPromptsResultSchema>["prompts"]>(apiUrl, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-        timeout: 10000, // Add a timeout
+      // Fetch both standard prompts and custom instructions concurrently
+      const [promptsResponse, customInstructionsResponse] = await Promise.all([
+        axios.get<z.infer<typeof ListPromptsResultSchema>["prompts"]>(promptsApiUrl, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 10000,
+        }),
+        axios.get<z.infer<typeof ListPromptsResultSchema>["prompts"]>(customInstructionsApiUrl, { // Assuming custom instructions API returns the same format
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 10000,
+        })
+      ]);
+
+      const standardPrompts = promptsResponse.data || [];
+      const customInstructionsAsPrompts = customInstructionsResponse.data || [];
+
+      // Clear previous instruction mapping and populate with new data
+      Object.keys(instructionToServerMap).forEach(key => delete instructionToServerMap[key]); // Clear map
+      customInstructionsAsPrompts.forEach(instr => {
+        if (instr.name && instr._serverUuid) {
+          // Assert _serverUuid as string since the check ensures it's not undefined
+          instructionToServerMap[instr.name] = instr._serverUuid as string;
+        } else {
+            console.error(`[ListPrompts Handler] Missing name or _serverUuid for custom instruction:`, instr);
+        }
       });
 
-      const prompts = response.data || [];
+      // Merge the results (Remove internal _serverUuid from custom instructions before sending to client)
+      const allPrompts = [
+          ...standardPrompts,
+          ...customInstructionsAsPrompts.map(({ _serverUuid, ...rest }) => rest)
+      ];
 
-      // Wrap the array in the expected structure for the MCP response
+      // Wrap the combined array in the expected structure for the MCP response
       // Note: Pagination not handled here
-      return { prompts: prompts, nextCursor: undefined };
+      return { prompts: allPrompts, nextCursor: undefined };
 
     } catch (error: any) {
       const errorMessage = axios.isAxiosError(error)
         ? `API Error (${error.response?.status}): ${error.message}`
         : error instanceof Error
         ? error.message
-        : "Unknown error fetching prompts from API";
+        : "Unknown error fetching prompts or custom instructions from API";
       console.error("[ListPrompts Handler Error]", errorMessage);
       // Let SDK handle error formatting
       throw new Error(`Failed to list prompts: ${errorMessage}`);
