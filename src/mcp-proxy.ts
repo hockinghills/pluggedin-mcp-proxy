@@ -61,11 +61,10 @@ export const createServer = async () => {
       version: packageJson.version,
     },
     {
-      // Restore resource capabilities
       capabilities: {
-        prompts: undefined, // No prompt support
-        resources: {}, // Resource support enabled
-        tools: {}, // Tool support enabled
+        prompts: {}, // Enable prompt support capability
+        resources: {},
+        tools: {},
       },
     }
   );
@@ -223,8 +222,112 @@ export const createServer = async () => {
     }
   });
 
-  // Removed Get Prompt Handler
-  // Removed List Prompts Handler
+  // Get Prompt Handler - Resolves prompt name via API and proxies to downstream server
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    const meta = request.params._meta;
+
+    try {
+        const apiKey = getPluggedinMCPApiKey();
+        const baseUrl = getPluggedinMCPApiBaseUrl();
+        if (!apiKey || !baseUrl) {
+            throw new Error("Pluggedin API Key or Base URL is not configured for prompt resolution.");
+        }
+
+        // 1. Call the API endpoint to resolve the prompt name
+        // Note: Assumes prompt names are unique or we handle potential conflicts (e.g., via prefixing if needed later)
+        const resolveApiUrl = `${baseUrl}/api/resolve/prompt?name=${encodeURIComponent(name)}`;
+        // console.error(`[GetPrompt Handler] Resolving prompt name via: ${resolveApiUrl}`);
+
+        const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+            timeout: 10000,
+        });
+
+        const serverParams = resolveResponse.data;
+        if (!serverParams || !serverParams.uuid) {
+            throw new Error(`Could not resolve server details for prompt name: ${name}`);
+        }
+
+        // 2. Get the downstream server session
+        const sessionKey = getSessionKey(serverParams.uuid, serverParams);
+        const session = await getSession(sessionKey, serverParams.uuid, serverParams);
+
+        if (!session) {
+            // Attempt re-init if session not found
+            console.warn(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+            await initSessions(); // Consider if re-initializing all is efficient
+            const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
+            if (!refreshedSession) {
+               throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling prompt: ${name}`);
+            }
+             // Use the refreshed session
+             console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
+             const result = await refreshedSession.client.request(
+                 { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
+                 GetPromptResultSchema
+             );
+             return result;
+        } else {
+             // Use the existing session
+             console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
+             const result = await session.client.request(
+                 { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
+                 GetPromptResultSchema
+             );
+             return result;
+        }
+
+    } catch (error: any) {
+        const errorMessage = axios.isAxiosError(error)
+            ? `API Error (${error.response?.status}) resolving prompt ${name}: ${error.response?.data?.error || error.message}`
+            : error instanceof Error
+            ? error.message
+            : `Unknown error getting prompt: ${name}`;
+        console.error("[GetPrompt Handler Error]", errorMessage);
+        // Let SDK handle error formatting
+        throw new Error(`Failed to get prompt ${name}: ${errorMessage}`);
+    }
+  });
+
+  // List Prompts Handler - Fetches aggregated list from Pluggedin App API
+  server.setRequestHandler(ListPromptsRequestSchema, async (request) => {
+    try {
+      const apiKey = getPluggedinMCPApiKey();
+      const baseUrl = getPluggedinMCPApiBaseUrl();
+      if (!apiKey || !baseUrl) {
+        throw new Error("Pluggedin API Key or Base URL is not configured.");
+      }
+
+      const apiUrl = `${baseUrl}/api/prompts`; // New endpoint
+
+      // Fetch the list of prompts
+      // Assuming the API returns McpPromptListEntry[] directly
+      const response = await axios.get<z.infer<typeof ListPromptsResultSchema>["prompts"]>(apiUrl, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        timeout: 10000, // Add a timeout
+      });
+
+      const prompts = response.data || [];
+
+      // Wrap the array in the expected structure for the MCP response
+      // Note: Pagination not handled here
+      return { prompts: prompts, nextCursor: undefined };
+
+    } catch (error: any) {
+      const errorMessage = axios.isAxiosError(error)
+        ? `API Error (${error.response?.status}): ${error.message}`
+        : error instanceof Error
+        ? error.message
+        : "Unknown error fetching prompts from API";
+      console.error("[ListPrompts Handler Error]", errorMessage);
+      // Let SDK handle error formatting
+      throw new Error(`Failed to list prompts: ${errorMessage}`);
+    }
+  });
+
 
   // List Resources Handler - Fetches aggregated list from Pluggedin App API
   server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
