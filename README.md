@@ -13,7 +13,7 @@
 
 ## 📋 Overview
 
-The plugged.in MCP Proxy Server is a powerful middleware that aggregates multiple Machine Conversation Protocol (MCP) servers into a single unified interface. It fetches tool, prompt, and resource configurations from the [plugged.in App](https://github.com/VeriTeknik/pluggedin-app) and intelligently routes requests to the appropriate underlying MCP servers.
+The plugged.in MCP Proxy Server is a powerful middleware that aggregates multiple Model Context Protocol (MCP) servers into a single unified interface. It fetches tool, prompt, and resource configurations from the [plugged.in App](https://github.com/VeriTeknik/pluggedin-app) and intelligently routes requests to the appropriate underlying MCP servers.
 
 This proxy enables seamless integration with any MCP client (Claude, Cline, Cursor, etc.) while providing advanced management capabilities through the plugged.in ecosystem.
 
@@ -219,7 +219,7 @@ The plugged.in MCP Proxy Server is designed to work seamlessly with the [plugged
 ## 📚 Related Resources
 
 - [plugged.in App Repository](https://github.com/VeriTeknik/pluggedin-app)
-- [Machine Conversation Protocol (MCP) Specification](https://modelcontextprotocol.io/)
+- [Model Context Protocol (MCP) Specification](https://modelcontextprotocol.io/)
 - [Claude Desktop Documentation](https://docs.anthropic.com/claude/docs/claude-desktop)
 - [Cline Documentation](https://docs.cline.bot/)
 
@@ -234,4 +234,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgements
 
 - Inspired by the [MCP Proxy Server](https://github.com/adamwattis/mcp-proxy-server/)
-- Built on the [Machine Conversation Protocol](https://modelcontextprotocol.io/)
+- Built on the [Model Context Protocol](https://modelcontextprotocol.io/)
