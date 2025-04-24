@@ -73,9 +73,9 @@ export const createServer = async () => {
     }
   );
 
-  // List Tools Handler - Fetches prefixed tools from Pluggedin App API and adds static tool
+  // List Tools Handler - Fetches tools from Pluggedin App API and adds static tool
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
-     let fetchedTools: (Tool & { _serverUuid: string })[] = [];
+     let fetchedTools: (Tool & { _serverUuid: string, _serverName?: string })[] = [];
      try {
        const apiKey = getPluggedinMCPApiKey();
        const baseUrl = getPluggedinMCPApiBaseUrl();
@@ -85,8 +85,8 @@ export const createServer = async () => {
 
        const apiUrl = `${baseUrl}/api/tools`; // Assuming this is the correct endpoint
 
-       // Fetch the list of tools (which now include prefixed names and _serverUuid)
-       const response = await axios.get<(Tool & { _serverUuid: string })[]>(apiUrl, {
+       // Fetch the list of tools (which include original names and server info)
+       const response = await axios.get<(Tool & { _serverUuid: string, _serverName?: string })[]>(apiUrl, {
          headers: {
            Authorization: `Bearer ${apiKey}`,
          },
@@ -97,20 +97,23 @@ export const createServer = async () => {
 
        // Clear previous mapping and populate with new data
        Object.keys(toolToServerMap).forEach(key => delete toolToServerMap[key]); // Clear map
+       
+       // Create mappings for each tool to its server
        fetchedTools.forEach(tool => {
-         // Extract original name (assuming prefix_originalName format)
-         const parts = tool.name.split('_');
-         const originalName = parts.slice(1).join('_'); // Handle names with underscores
-         if (originalName && tool._serverUuid) {
-            toolToServerMap[tool.name] = { originalName: originalName, serverUuid: tool._serverUuid };
+         // Store mapping with original name as the key
+         if (tool.name && tool._serverUuid) {
+            toolToServerMap[tool.name] = { 
+              originalName: tool.name, // No transformation needed anymore
+              serverUuid: tool._serverUuid 
+            };
          } else {
-            console.error(`[ListTools Handler] Could not parse original name or missing UUID for tool: ${tool.name}`);
+            console.error(`[ListTools Handler] Missing tool name or UUID for tool: ${tool.name}`);
          }
        });
 
        // Prepare the response payload according to MCP spec { tools: Tool[] }
-       // Remove the internal _serverUuid before sending to client
-       const toolsForClient: Tool[] = fetchedTools.map(({ _serverUuid, ...rest }) => rest);
+       // Remove the internal _serverUuid and _serverName before sending to client
+       const toolsForClient: Tool[] = fetchedTools.map(({ _serverUuid, _serverName, ...rest }) => rest);
 
        // Note: Pagination not handled here, assumes API returns all tools
 
@@ -131,7 +134,7 @@ export const createServer = async () => {
      }
   });
 
-  // Call Tool Handler - Handles prefixed tool names and proxies to downstream server, plus static tool
+  // Call Tool Handler - Routes tool calls to the appropriate downstream server
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name: requestedToolName, arguments: args } = request.params;
     const meta = request.params._meta;
@@ -176,7 +179,7 @@ export const createServer = async () => {
             }
         }
 
-        // Look up the downstream tool in our map
+        // Look up the downstream tool in our map using original name
         const toolInfo = toolToServerMap[requestedToolName];
         if (!toolInfo) {
             throw new Error(`Method not found: ${requestedToolName}`);
@@ -189,7 +192,6 @@ export const createServer = async () => {
         const serverParams = await getMcpServers(true);
         const params = serverParams[serverUuid];
         if (!params) {
-            // Use requestedToolName here
             throw new Error(`Configuration not found for server UUID: ${serverUuid} associated with tool ${requestedToolName}`);
         }
         const sessionKey = getSessionKey(serverUuid, params);
@@ -199,14 +201,11 @@ export const createServer = async () => {
             throw new Error(`Session not found for server UUID: ${serverUuid}`);
         }
 
-        // Proxy the call to the downstream server using the ORIGINAL tool name
-        // Use requestedToolName here
-        console.error(`[CallTool Proxy] Calling original tool '${originalName}' on server ${serverUuid} for prefixed name '${requestedToolName}'`);
+        // Proxy the call to the downstream server using the original tool name
+        console.error(`[CallTool Proxy] Calling tool '${originalName}' on server ${serverUuid}`);
         const result = await session.client.request(
             { method: "tools/call", params: { name: originalName, arguments: args, _meta: meta } },
-            // Assuming downstream server returns CompatibilityCallToolResultSchema or similar
-            // Use a broad schema or 'any' if unsure, but CompatibilityCallToolResultSchema is safer
-             CompatibilityCallToolResultSchema
+            CompatibilityCallToolResultSchema
         );
 
         // Return the result directly, casting to any to satisfy the handler's complex return type
