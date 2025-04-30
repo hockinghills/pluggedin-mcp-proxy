@@ -86,14 +86,16 @@ export const createServer = async () => {
        const apiUrl = `${baseUrl}/api/tools`; // Assuming this is the correct endpoint
 
        // Fetch the list of tools (which include original names and server info)
-       const response = await axios.get<(Tool & { _serverUuid: string, _serverName?: string })[]>(apiUrl, {
+       // The API returns an object like { tools: [], message?: "..." }
+       const response = await axios.get<{ tools: (Tool & { _serverUuid: string, _serverName?: string })[], message?: string }>(apiUrl, {
          headers: {
            Authorization: `Bearer ${apiKey}`,
          },
          timeout: 10000,
        });
 
-       const fetchedTools = response.data || [];
+       // Access the 'tools' array from the response payload
+       const fetchedTools = response.data?.tools || [];
 
        // Clear previous mapping and populate with new data
        Object.keys(toolToServerMap).forEach(key => delete toolToServerMap[key]); // Clear map
@@ -205,7 +207,7 @@ export const createServer = async () => {
         console.error(`[CallTool Proxy] Calling tool '${originalName}' on server ${serverUuid}`);
         const result = await session.client.request(
             { method: "tools/call", params: { name: originalName, arguments: args, _meta: meta } },
-            CompatibilityCallToolResultSchema
+             CompatibilityCallToolResultSchema
         );
 
         // Return the result directly, casting to any to satisfy the handler's complex return type
