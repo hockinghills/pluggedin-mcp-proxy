@@ -17,6 +17,7 @@ import {
   CompatibilityCallToolResultSchema,
   GetPromptResultSchema,
   PromptMessage, // Import PromptMessage
+  PingRequestSchema, // Import PingRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { getMcpServers } from "./fetch-pluggedinmcp.js";
@@ -546,6 +547,13 @@ export const createServer = async () => {
       // Let SDK handle error formatting
       throw new Error(`Failed to list resource templates: ${errorMessage}`);
     }
+  });
+
+  // Ping Handler - Responds to simple ping requests
+  server.setRequestHandler(PingRequestSchema, async (request) => {
+    console.error("[Ping Handler] Received ping request.");
+    // Ping response should be an empty object for success
+    return {};
   });
 
   const cleanup = async () => {
