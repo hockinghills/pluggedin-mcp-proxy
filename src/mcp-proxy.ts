@@ -56,6 +56,21 @@ const discoverToolsStaticTool: Tool = {
     inputSchema: zodToJsonSchema(DiscoverToolsInputSchema) as any,
 };
 
+// Define the static RAG query tool schema using Zod
+const RagQueryInputSchema = z.object({
+  query: z.string()
+    .min(1, "Query cannot be empty")
+    .max(1000, "Query too long")
+    .describe("The RAG query to perform."),
+}).describe("Performs a RAG query against documents in the authenticated user's project.");
+
+// Define the static RAG query tool structure
+const ragQueryStaticTool: Tool = {
+    name: "pluggedin_rag_query",
+    description: "Performs a RAG query against documents in the Pluggedin App.",
+    inputSchema: zodToJsonSchema(RagQueryInputSchema) as any,
+};
+
 
 // Removed old static tool instances (getToolsInstance, callToolInstance) as they are superseded by API fetching
 
@@ -120,8 +135,8 @@ export const createServer = async () => {
 
        // Note: Pagination not handled here, assumes API returns all tools
 
-       // Always include the static discovery tool
-       const allToolsForClient = [discoverToolsStaticTool, ...toolsForClient];
+       // Always include the static tools
+       const allToolsForClient = [discoverToolsStaticTool, ragQueryStaticTool, ...toolsForClient];
 
        return { tools: allToolsForClient, nextCursor: undefined };
 
@@ -179,6 +194,50 @@ export const createServer = async () => {
                     ? `API Error (${apiError.response?.status}): ${apiError.response?.data?.error || apiError.message}`
                     : apiError.message;
                  throw new Error(`Failed to trigger discovery via API: ${errorMsg}`);
+            }
+        }
+
+        // Handle static RAG query tool
+        if (requestedToolName === ragQueryStaticTool.name) {
+            console.error(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = RagQueryInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for RAG query.");
+            }
+
+            // Define the API endpoint in pluggedin-app for RAG queries
+            const ragApiUrl = `${baseUrl}/api/rag/query`;
+
+            try {
+                // Make POST request with RAG query (ragIdentifier removed for security)
+                const ragResponse = await axios.post(ragApiUrl, {
+                    query: validatedArgs.query,
+                }, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 15000, // Reduced timeout to prevent DoS
+                    responseType: 'text' // Expect text response, not JSON
+                });
+
+                // The API returns plain text response
+                const responseText = ragResponse.data || "No response generated";
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult; // Cast to expected type
+
+            } catch (apiError: any) {
+                 // Sanitized error message to prevent information disclosure
+                 const errorMsg = axios.isAxiosError(apiError) && apiError.response?.status
+                    ? `RAG service error (${apiError.response.status})`
+                    : "RAG service temporarily unavailable";
+                 throw new Error(errorMsg);
             }
         }
 
