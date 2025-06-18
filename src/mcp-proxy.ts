@@ -32,6 +32,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import { readFileSync } from 'fs';
 import { createRequire } from 'module';
 import { ToolExecutionResult, ServerParameters } from "./types.js"; // Import ServerParameters
+import { logMcpActivity, createExecutionTimer } from "./notification-logger.js";
 // Removed incorrect McpMessage import
 
 const require = createRequire(import.meta.url);
@@ -174,6 +175,8 @@ export const createServer = async () => {
             const discoveryApiUrl = validatedArgs.server_uuid
                 ? `${baseUrl}/api/discover/${validatedArgs.server_uuid}` // Endpoint for specific server
                 : `${baseUrl}/api/discover/all`; // Endpoint for all servers
+            
+            const timer = createExecutionTimer();
 
             try {
                 // Make POST request to trigger discovery
@@ -184,12 +187,34 @@ export const createServer = async () => {
 
                 // Return success message from the discovery API response
                 const responseMessage = discoveryResponse.data?.message || "Discovery process initiated.";
+                
+                // Log successful discovery
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Discovery System',
+                    serverUuid: 'pluggedin_discovery',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
                 return {
                     content: [{ type: "text", text: responseMessage }],
                     isError: false,
                 } as ToolExecutionResult; // Cast to expected type
 
             } catch (apiError: any) {
+                // Log failed discovery
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Discovery System',
+                    serverUuid: 'pluggedin_discovery',
+                    itemName: requestedToolName,
+                    success: false,
+                    errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
                  const errorMsg = axios.isAxiosError(apiError)
                     ? `API Error (${apiError.response?.status}): ${apiError.response?.data?.error || apiError.message}`
                     : apiError.message;
@@ -210,6 +235,7 @@ export const createServer = async () => {
 
             // Define the API endpoint in pluggedin-app for RAG queries
             const ragApiUrl = `${baseUrl}/api/rag/query`;
+            const timer = createExecutionTimer();
 
             try {
                 // Make POST request with RAG query (ragIdentifier removed for security)
@@ -227,12 +253,33 @@ export const createServer = async () => {
                 // The API returns plain text response
                 const responseText = ragResponse.data || "No response generated";
                 
+                // Log successful RAG query
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'RAG System',
+                    serverUuid: 'pluggedin_rag',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
                 return {
                     content: [{ type: "text", text: responseText }],
                     isError: false,
                 } as ToolExecutionResult; // Cast to expected type
 
             } catch (apiError: any) {
+                 // Log failed RAG query
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'RAG System',
+                     serverUuid: 'pluggedin_rag',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
                  // Sanitized error message to prevent information disclosure
                  const errorMsg = axios.isAxiosError(apiError) && apiError.response?.status
                     ? `RAG service error (${apiError.response.status})`
@@ -265,13 +312,41 @@ export const createServer = async () => {
 
         // Proxy the call to the downstream server using the original tool name
         console.error(`[CallTool Proxy] Calling tool '${originalName}' on server ${serverUuid}`);
-        const result = await session.client.request(
-            { method: "tools/call", params: { name: originalName, arguments: args, _meta: meta } },
-             CompatibilityCallToolResultSchema
-        );
+        const timer = createExecutionTimer();
+        
+        try {
+            const result = await session.client.request(
+                { method: "tools/call", params: { name: originalName, arguments: args, _meta: meta } },
+                 CompatibilityCallToolResultSchema
+            );
 
-        // Return the result directly, casting to any to satisfy the handler's complex return type
-        return result as any;
+            // Log successful tool call
+            logMcpActivity({
+                action: 'tool_call',
+                serverName: params.name || serverUuid,
+                serverUuid,
+                itemName: originalName,
+                success: true,
+                executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+
+            // Return the result directly, casting to any to satisfy the handler's complex return type
+            return result as any;
+        } catch (toolError) {
+            // Log failed tool call
+            logMcpActivity({
+                action: 'tool_call',
+                serverName: params.name || serverUuid,
+                serverUuid,
+                itemName: originalName,
+                success: false,
+                errorMessage: toolError instanceof Error ? toolError.message : String(toolError),
+                executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            // Re-throw the original error
+            throw toolError;
+        }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -315,6 +390,8 @@ export const createServer = async () => {
         const instructionApiUrl = `${baseUrl}/api/custom-instructions/${serverUuid}`;
         console.error(`[GetPrompt Handler] Fetching instruction details from: ${instructionApiUrl}`);
 
+        const timer = createExecutionTimer();
+        
         try {
           // Expecting the API to return { messages: PromptMessage[] }
           const response = await axios.get<{ messages: PromptMessage[] }>(instructionApiUrl, {
@@ -327,6 +404,16 @@ export const createServer = async () => {
              throw new Error(`Invalid response format from ${instructionApiUrl}`);
           }
 
+          // Log successful custom instruction retrieval
+          logMcpActivity({
+            action: 'prompt_get',
+            serverName: 'Custom Instructions',
+            serverUuid,
+            itemName: name,
+            success: true,
+            executionTime: timer.stop(),
+          }).catch(() => {}); // Ignore notification errors
+
           // Construct the GetPromptResult directly in the proxy
           return {
             messages: instructionData.messages,
@@ -336,6 +423,18 @@ export const createServer = async () => {
            const errorMsg = axios.isAxiosError(apiError)
               ? `API Error (${apiError.response?.status}) fetching instruction ${name}: ${apiError.response?.data?.error || apiError.message}`
               : apiError.message;
+              
+           // Log failed custom instruction retrieval
+           logMcpActivity({
+             action: 'prompt_get',
+             serverName: 'Custom Instructions',
+             serverUuid,
+             itemName: name,
+             success: false,
+             errorMessage: errorMsg,
+             executionTime: timer.stop(),
+           }).catch(() => {}); // Ignore notification errors
+           
            throw new Error(`Failed to fetch custom instruction details: ${errorMsg}`);
         }
 
@@ -368,17 +467,75 @@ export const createServer = async () => {
           }
           // Use the refreshed session
           console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
-          return await refreshedSession.client.request(
-            { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
-            GetPromptResultSchema
-          );
+          const timer = createExecutionTimer();
+          
+          try {
+            const result = await refreshedSession.client.request(
+              { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
+              GetPromptResultSchema
+            );
+            
+            // Log successful prompt retrieval
+            logMcpActivity({
+              action: 'prompt_get',
+              serverName: serverParams.name || serverParams.uuid,
+              serverUuid: serverParams.uuid,
+              itemName: name,
+              success: true,
+              executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            return result;
+          } catch (promptError) {
+            // Log failed prompt retrieval
+            logMcpActivity({
+              action: 'prompt_get',
+              serverName: serverParams.name || serverParams.uuid,
+              serverUuid: serverParams.uuid,
+              itemName: name,
+              success: false,
+              errorMessage: promptError instanceof Error ? promptError.message : String(promptError),
+              executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            throw promptError;
+          }
         } else {
           // Use the existing session
           console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
-          return await session.client.request(
-            { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
-            GetPromptResultSchema
-          );
+          const timer = createExecutionTimer();
+          
+          try {
+            const result = await session.client.request(
+              { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
+              GetPromptResultSchema
+            );
+            
+            // Log successful prompt retrieval
+            logMcpActivity({
+              action: 'prompt_get',
+              serverName: serverParams.name || serverParams.uuid,
+              serverUuid: serverParams.uuid,
+              itemName: name,
+              success: true,
+              executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            return result;
+          } catch (promptError) {
+            // Log failed prompt retrieval
+            logMcpActivity({
+              action: 'prompt_get',
+              serverName: serverParams.name || serverParams.uuid,
+              serverUuid: serverParams.uuid,
+              itemName: name,
+              success: false,
+              errorMessage: promptError instanceof Error ? promptError.message : String(promptError),
+              executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            throw promptError;
+          }
         }
       }
     } catch (error: any) {
@@ -540,19 +697,75 @@ export const createServer = async () => {
             }
              // Use the refreshed session
              console.error(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
-             const result = await refreshedSession.client.request(
-                 { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
-                 ReadResourceResultSchema
-             );
-             return result;
+             const timer = createExecutionTimer();
+             
+             try {
+               const result = await refreshedSession.client.request(
+                   { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
+                   ReadResourceResultSchema
+               );
+               
+               // Log successful resource read
+               logMcpActivity({
+                 action: 'resource_read',
+                 serverName: serverParams.name || serverParams.uuid,
+                 serverUuid: serverParams.uuid,
+                 itemName: uri,
+                 success: true,
+                 executionTime: timer.stop(),
+               }).catch(() => {}); // Ignore notification errors
+               
+               return result;
+             } catch (resourceError) {
+               // Log failed resource read
+               logMcpActivity({
+                 action: 'resource_read',
+                 serverName: serverParams.name || serverParams.uuid,
+                 serverUuid: serverParams.uuid,
+                 itemName: uri,
+                 success: false,
+                 errorMessage: resourceError instanceof Error ? resourceError.message : String(resourceError),
+                 executionTime: timer.stop(),
+               }).catch(() => {}); // Ignore notification errors
+               
+               throw resourceError;
+             }
         } else {
              // Use the existing session
              console.error(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
-             const result = await session.client.request(
-                 { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
-                 ReadResourceResultSchema
-             );
-             return result;
+             const timer = createExecutionTimer();
+             
+             try {
+               const result = await session.client.request(
+                   { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
+                   ReadResourceResultSchema
+               );
+               
+               // Log successful resource read
+               logMcpActivity({
+                 action: 'resource_read',
+                 serverName: serverParams.name || serverParams.uuid,
+                 serverUuid: serverParams.uuid,
+                 itemName: uri,
+                 success: true,
+                 executionTime: timer.stop(),
+               }).catch(() => {}); // Ignore notification errors
+               
+               return result;
+             } catch (resourceError) {
+               // Log failed resource read
+               logMcpActivity({
+                 action: 'resource_read',
+                 serverName: serverParams.name || serverParams.uuid,
+                 serverUuid: serverParams.uuid,
+                 itemName: uri,
+                 success: false,
+                 errorMessage: resourceError instanceof Error ? resourceError.message : String(resourceError),
+                 executionTime: timer.stop(),
+               }).catch(() => {}); // Ignore notification errors
+               
+               throw resourceError;
+             }
         }
 
     } catch (error: any) {
