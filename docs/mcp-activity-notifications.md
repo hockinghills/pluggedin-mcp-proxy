@@ -44,6 +44,40 @@ No additional configuration is needed. The notification system uses the same API
 - `PLUGGEDIN_API_KEY` - Your API key
 - `PLUGGEDIN_API_BASE_URL` - Base URL for the plugged.in app
 
+## Inspector Authentication
+
+The MCP Inspector now requires authentication for security. We provide multiple modes:
+
+### Auto-Opening Mode (Recommended)
+```bash
+pnpm inspector
+```
+This automatically:
+- Starts the inspector with authentication disabled (`DANGEROUSLY_OMIT_AUTH=true`)
+- Opens your browser to `http://localhost:6274` after 3 seconds
+- No manual token entry required
+
+### Manual Mode
+```bash
+pnpm inspector:manual
+```
+Starts the inspector with authentication disabled but doesn't auto-open the browser.
+
+### Authenticated Mode
+```bash
+pnpm inspector:auth
+```
+This requires using the session token displayed in the console output for production-like testing.
+
+## MCP Authorization Compliance
+
+Our proxy follows the [MCP Authorization specification](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization):
+
+- **STDIO Transport**: Uses environment-based credentials (API keys) as recommended
+- **HTTP Endpoints**: All API calls use Bearer token authentication
+- **Security**: All communication with pluggedin-app uses HTTPS and proper authentication
+- **OAuth 2.1**: Not implemented as it's optional for STDIO-based MCP servers
+
 ## Viewing Notifications
 
 Notifications appear in the plugged.in app's notification system where users can:

@@ -72,8 +72,48 @@ const ragQueryStaticTool: Tool = {
     inputSchema: zodToJsonSchema(RagQueryInputSchema) as any,
 };
 
+// Define the static tool for sending custom notifications
+const sendNotificationStaticTool = {
+  name: "pluggedin_send_notification",
+  description: "Send custom notifications through the Plugged.in system with optional email delivery",
+  inputSchema: {
+    type: "object",
+    properties: {
+      message: {
+        type: "string",
+        description: "The notification message content"
+      },
+      severity: {
+        type: "string",
+        enum: ["INFO", "SUCCESS", "WARNING", "ALERT"],
+        description: "The severity level of the notification (defaults to INFO)",
+        default: "INFO"
+      },
+      sendEmail: {
+        type: "boolean",
+        description: "Whether to also send the notification via email",
+        default: false
+      }
+    },
+    required: ["message"]
+  }
+} as const;
+
+// Input schema for validation
+const SendNotificationInputSchema = z.object({
+  message: z.string().min(1, "Message cannot be empty"),
+  severity: z.enum(["INFO", "SUCCESS", "WARNING", "ALERT"]).default("INFO"),
+  sendEmail: z.boolean().optional().default(false),
+});
 
 // Removed old static tool instances (getToolsInstance, callToolInstance) as they are superseded by API fetching
+
+// Define the static prompt for proxy capabilities
+const proxyCapabilitiesStaticPrompt = {
+  name: "pluggedin_proxy_capabilities",
+  description: "Learn about the Plugged.in MCP Proxy capabilities and available tools",
+  arguments: []
+} as const;
 
 export const createServer = async () => {
   const server = new Server(
@@ -137,7 +177,7 @@ export const createServer = async () => {
        // Note: Pagination not handled here, assumes API returns all tools
 
        // Always include the static tools
-       const allToolsForClient = [discoverToolsStaticTool, ragQueryStaticTool, ...toolsForClient];
+       const allToolsForClient = [discoverToolsStaticTool, ragQueryStaticTool, sendNotificationStaticTool, ...toolsForClient];
 
        return { tools: allToolsForClient, nextCursor: undefined };
 
@@ -288,6 +328,74 @@ export const createServer = async () => {
             }
         }
 
+        // Handle static send notification tool
+        if (requestedToolName === sendNotificationStaticTool.name) {
+            console.error(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = SendNotificationInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for custom notifications.");
+            }
+
+            // Define the API endpoint in pluggedin-app for custom notifications
+            const notificationApiUrl = `${baseUrl}/api/notifications/custom`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make POST request with notification data
+                const notificationResponse = await axios.post(notificationApiUrl, {
+                    message: validatedArgs.message,
+                    severity: validatedArgs.severity,
+                    sendEmail: validatedArgs.sendEmail,
+                }, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 30000, // Increased timeout for notifications
+                });
+
+                // The API returns success confirmation
+                const responseData = notificationResponse.data;
+                const responseText = responseData?.message || "Notification sent successfully";
+                
+                // Log successful notification
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Notification System',
+                    serverUuid: 'pluggedin_notifications',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult; // Cast to expected type
+
+            } catch (apiError: any) {
+                 // Log failed notification
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'Notification System',
+                     serverUuid: 'pluggedin_notifications',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Sanitized error message
+                 const errorMsg = axios.isAxiosError(apiError) && apiError.response?.status
+                    ? `Notification service error (${apiError.response.status})`
+                    : "Notification service temporarily unavailable";
+                 throw new Error(errorMsg);
+            }
+        }
+
         // Look up the downstream tool in our map using original name
         const toolInfo = toolToServerMap[requestedToolName];
         if (!toolInfo) {
@@ -362,11 +470,110 @@ export const createServer = async () => {
     }
   });
 
-  // Get Prompt Handler - Handles standard prompts (via resolve API + proxy) and custom instructions (via direct API call)
+  // Get Prompt Handler - Handles static prompts, custom instructions, and standard prompts
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const meta = request.params._meta;
     const instructionPrefix = 'pluggedin_instruction_';
+
+    // Handle static proxy capabilities prompt first
+    if (name === proxyCapabilitiesStaticPrompt.name) {
+      const timer = createExecutionTimer();
+      
+      try {
+        // Log successful static prompt retrieval
+        logMcpActivity({
+          action: 'prompt_get',
+          serverName: 'Proxy System',
+          serverUuid: 'pluggedin_proxy',
+          itemName: name,
+          success: true,
+          executionTime: timer.stop(),
+        }).catch(() => {}); // Ignore notification errors
+        
+        return {
+          messages: [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: `# Plugged.in MCP Proxy Capabilities
+
+The Plugged.in MCP Proxy is a powerful gateway that provides access to multiple MCP servers and built-in tools. Here's what you can do:
+
+## 🔧 Built-in Static Tools
+
+### 1. **pluggedin_discover_tools**
+- **Purpose**: Trigger discovery of tools and resources from configured MCP servers
+- **Parameters**: 
+  - \`server_uuid\` (optional): Discover from specific server, or all servers if omitted
+- **Usage**: Refreshes the available tools list when new servers are added
+
+### 2. **pluggedin_rag_query**
+- **Purpose**: Perform RAG (Retrieval-Augmented Generation) queries against your documents
+- **Parameters**:
+  - \`query\` (required): The search query (1-1000 characters)
+- **Usage**: Search through uploaded documents and knowledge base
+
+### 3. **pluggedin_send_notification**
+- **Purpose**: Send custom notifications through the Plugged.in system
+- **Parameters**:
+  - \`message\` (required): The notification message content
+  - \`severity\` (optional): INFO, SUCCESS, WARNING, or ALERT (defaults to INFO)
+  - \`sendEmail\` (optional): Whether to also send via email (defaults to false)
+- **Usage**: Create custom notifications with optional email delivery
+
+## 🔗 Proxy Features
+
+### MCP Server Management
+- **Auto-discovery**: Automatically discovers tools, prompts, and resources from configured servers
+- **Session Management**: Maintains persistent connections to downstream MCP servers
+- **Error Handling**: Graceful error handling and recovery for server connections
+
+### Authentication & Security
+- **API Key Authentication**: Secure access using your Plugged.in API key
+- **Profile-based Access**: All operations are scoped to your active profile
+- **Audit Logging**: All MCP activities are logged for monitoring and debugging
+
+### Notification System
+- **Activity Tracking**: Automatic logging of all MCP operations (tools, prompts, resources)
+- **Performance Metrics**: Execution timing for all operations
+- **Custom Notifications**: Send custom notifications with email delivery options
+
+## 🚀 Getting Started
+
+1. **Configure Environment**: Set \`PLUGGEDIN_API_KEY\` and \`PLUGGEDIN_API_BASE_URL\`
+2. **Discover Tools**: Run \`pluggedin_discover_tools\` to see available tools from your servers
+3. **Use Tools**: Call any discovered tool through the proxy
+4. **Query Documents**: Use \`pluggedin_rag_query\` to search your knowledge base
+5. **Send Notifications**: Use \`pluggedin_send_notification\` for custom alerts
+
+## 📊 Monitoring
+
+- Check the Plugged.in app notifications to see MCP activity logs
+- Monitor execution times and success rates
+- View custom notifications in the notification center
+
+The proxy acts as a unified gateway to all your MCP capabilities while providing enhanced features like RAG, notifications, and comprehensive logging.`
+              }
+            }
+          ]
+        };
+      } catch (error) {
+        // Log failed static prompt retrieval
+        logMcpActivity({
+          action: 'prompt_get',
+          serverName: 'Proxy System',
+          serverUuid: 'pluggedin_proxy',
+          itemName: name,
+          success: false,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          executionTime: timer.stop(),
+        }).catch(() => {}); // Ignore notification errors
+        
+        throw error;
+      }
+    }
 
     try {
       const apiKey = getPluggedinMCPApiKey();
@@ -589,6 +796,7 @@ export const createServer = async () => {
 
       // Merge the results (Remove internal _serverUuid from custom instructions before sending to client)
       const allPrompts = [
+          proxyCapabilitiesStaticPrompt, // Add static proxy capabilities prompt
           ...standardPrompts,
           ...customInstructionsAsPrompts.map(({ _serverUuid, ...rest }) => rest)
       ];
