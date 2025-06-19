@@ -33,6 +33,7 @@ import { readFileSync } from 'fs';
 import { createRequire } from 'module';
 import { ToolExecutionResult, ServerParameters } from "./types.js"; // Import ServerParameters
 import { logMcpActivity, createExecutionTimer } from "./notification-logger.js";
+import { RateLimiter, sanitizeErrorMessage } from "./security-utils.js";
 // Removed incorrect McpMessage import
 
 const require = createRequire(import.meta.url);
@@ -116,6 +117,10 @@ const proxyCapabilitiesStaticPrompt = {
 } as const;
 
 export const createServer = async () => {
+  // Create rate limiters for different operations
+  const toolCallRateLimiter = new RateLimiter(60000, 60); // 60 calls per minute
+  const apiCallRateLimiter = new RateLimiter(60000, 100); // 100 API calls per minute
+  
   const server = new Server(
     {
       name: "PluggedinMCP",
@@ -132,6 +137,11 @@ export const createServer = async () => {
 
   // List Tools Handler - Fetches tools from Pluggedin App API and adds static tool
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+     // Rate limit check
+     if (!apiCallRateLimiter.checkLimit()) {
+       throw new Error("Rate limit exceeded. Please try again later.");
+     }
+     
      let fetchedTools: (Tool & { _serverUuid: string, _serverName?: string })[] = [];
      try {
        const apiKey = getPluggedinMCPApiKey();
@@ -183,13 +193,13 @@ export const createServer = async () => {
 
      } catch (error: any) {
        // Log API fetch error but still return the static tool
-       const errorMessage = axios.isAxiosError(error)
-         ? `API Error (${error.response?.status}): ${error.message}`
-         : error instanceof Error
-         ? error.message
-         : "Unknown error fetching tools from API";
-       console.error("[ListTools Handler Error]", errorMessage);
-       throw new Error(`Failed to list tools: ${errorMessage}`);
+       let sanitizedError = "Failed to list tools";
+       if (axios.isAxiosError(error) && error.response?.status) {
+         // Only include status code, not full error details
+         sanitizedError = `Failed to list tools (HTTP ${error.response.status})`;
+       }
+       console.error("[ListTools Handler Error]", error); // Log full error internally
+       throw new Error(sanitizedError);
      }
   });
 
@@ -197,6 +207,11 @@ export const createServer = async () => {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name: requestedToolName, arguments: args } = request.params;
     const meta = request.params._meta;
+
+    // Rate limit check for tool calls
+    if (!toolCallRateLimiter.checkLimit()) {
+      throw new Error("Rate limit exceeded. Please try again later.");
+    }
 
     try {
         // Handle static discovery tool first
