@@ -681,7 +681,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         const session = await getSession(sessionKey, serverParams.uuid, serverParams);
 
         if (!session) {
-          console.warn(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+          console.error(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
           await initSessions();
           const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
           if (!refreshedSession) {
@@ -912,7 +912,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         if (!session) {
             // Attempt to re-initialize sessions if not found (might happen on proxy restart)
             // This is a potential area for improvement (e.g., caching serverParams)
-            console.warn(`[ReadResource Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+            console.error(`[ReadResource Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
             await initSessions(); // Re-initialize all sessions
             const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
             if (!refreshedSession) {

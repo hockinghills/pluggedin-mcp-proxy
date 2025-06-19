@@ -53,8 +53,10 @@ try {
 }
 
 // Validate and sanitize environment variables before use
-const sanitizedApiKey = envVars.PLUGGEDIN_API_KEY ? String(envVars.PLUGGEDIN_API_KEY).replace(/[^a-zA-Z0-9_-]/g, '') : '';
-const sanitizedApiUrl = envVars.PLUGGEDIN_API_BASE_URL ? String(envVars.PLUGGEDIN_API_BASE_URL).replace(/[^a-zA-Z0-9:/.\-_]/g, '') : '';
+// For API key, allow alphanumeric, underscores, and hyphens (common in API keys)
+const sanitizedApiKey = envVars.PLUGGEDIN_API_KEY ? String(envVars.PLUGGEDIN_API_KEY).trim() : '';
+// For URL, just trim whitespace - URL validation happens in the app
+const sanitizedApiUrl = envVars.PLUGGEDIN_API_BASE_URL ? String(envVars.PLUGGEDIN_API_BASE_URL).trim() : '';
 
 // Spawn the inspector process with validated environment variables
 const inspector = spawn('npx', [

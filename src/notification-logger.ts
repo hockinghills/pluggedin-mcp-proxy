@@ -15,21 +15,22 @@ export interface McpActivityData {
  * Log MCP server activity to the pluggedin-app notification system
  */
 export async function logMcpActivity(data: McpActivityData): Promise<void> {
-  console.log(`[Notification Logger] Attempting to log activity:`, JSON.stringify(data, null, 2));
+  // Use console.error for all logging to avoid interfering with stdout JSON-RPC protocol
+  console.error(`[Notification Logger] Attempting to log activity:`, JSON.stringify(data, null, 2));
   
   try {
     const apiKey = getPluggedinMCPApiKey();
     const baseUrl = getPluggedinMCPApiBaseUrl();
     
-    console.log(`[Notification Logger] Configuration - API Key: ${apiKey ? 'SET' : 'NOT SET'}, Base URL: ${baseUrl || 'NOT SET'}`);
+    console.error(`[Notification Logger] Configuration - API Key: ${apiKey ? 'SET' : 'NOT SET'}, Base URL: ${baseUrl || 'NOT SET'}`);
     
     if (!apiKey || !baseUrl) {
-      console.warn('[Notification Logger] API key or base URL not configured, skipping notification');
+      console.error('[Notification Logger] API key or base URL not configured, skipping notification');
       return;
     }
 
     const notificationUrl = `${baseUrl}/api/notifications/mcp-activity`;
-    console.log(`[Notification Logger] Sending POST to: ${notificationUrl}`);
+    console.error(`[Notification Logger] Sending POST to: ${notificationUrl}`);
     
     const response = await axios.post(notificationUrl, data, {
       headers: {
@@ -39,8 +40,8 @@ export async function logMcpActivity(data: McpActivityData): Promise<void> {
       timeout: 5000, // Short timeout for notifications
     });
 
-    console.log(`[Notification Logger] ✅ Successfully logged ${data.action} for ${data.itemName}`);
-    console.log(`[Notification Logger] Response status: ${response.status}, data:`, response.data);
+    console.error(`[Notification Logger] ✅ Successfully logged ${data.action} for ${data.itemName}`);
+    console.error(`[Notification Logger] Response status: ${response.status}, data:`, response.data);
   } catch (error) {
     // Don't throw errors for notification logging failures
     console.error('[Notification Logger] ❌ Failed to log MCP activity:', 

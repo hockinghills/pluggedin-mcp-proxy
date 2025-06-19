@@ -261,7 +261,20 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📝 Recent Updates
 
-### Version 0.5.10 (Latest)
+### Version 0.5.12 (Latest)
+
+#### Bug Fixes
+- **Fixed localhost URL validation**: Allow localhost URLs for API base URL to support development environments
+- **Fixed API key sanitization**: Removed overly aggressive sanitization that was breaking API keys in inspector scripts
+- **Fixed environment variable loading**: Improved .env.local parsing in inspector scripts
+
+### Version 0.5.11
+
+#### Bug Fixes
+- **Fixed JSON-RPC Protocol Interference**: Moved all logging from stdout to stderr to prevent "[Notificati..." errors
+- **MCP Protocol Compliance**: Ensured stdout is used exclusively for JSON-RPC messages
+
+### Version 0.5.10
 
 #### New Features
 - **RAG Query Tool**: Added `pluggedin_rag_query` tool for performing RAG queries against documents in the authenticated user's project

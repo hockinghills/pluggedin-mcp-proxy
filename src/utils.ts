@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { ServerParameters } from "./types.js"; // Corrected import path
-import { validateBearerToken, validateUrl, validateEnvVarName } from "./security-utils.js";
+import { validateBearerToken, validateUrl, validateApiUrl, validateEnvVarName } from "./security-utils.js";
 
 export const getSessionKey = (uuid: string, params: ServerParameters): string => {
   const hash = crypto.createHash("sha256");
@@ -31,8 +31,8 @@ export const getPluggedinMCPApiBaseUrl = (baseUrl?: string): string | undefined 
   // Prioritize argument, then environment variable, then fallback
   const url = baseUrl ?? process.env.PLUGGEDIN_API_BASE_URL ?? 'https://plugged.in';
   
-  // Validate URL format
-  if (!validateUrl(url)) {
+  // Validate URL format (use validateApiUrl which allows localhost)
+  if (!validateApiUrl(url)) {
     console.error("Invalid API base URL format detected");
     return undefined;
   }
