@@ -24,12 +24,25 @@ program
 
 const options = program.opts();
 
-// Set environment variables from command line arguments
-if (options.PLUGGEDIN_API_KEY) {
-  process.env.PLUGGEDIN_API_KEY = options.PLUGGEDIN_API_KEY;
+// Validate and sanitize command line arguments before setting environment variables
+if (options['pluggedinApiKey']) {
+  // Validate API key format (alphanumeric, hyphens, underscores)
+  const sanitizedApiKey = String(options['pluggedinApiKey']).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (sanitizedApiKey.length > 0) {
+    process.env.PLUGGEDIN_API_KEY = sanitizedApiKey;
+  }
 }
 if (options.pluggedinApiBaseUrl) {
-  process.env.PLUGGEDIN_API_BASE_URL = options.pluggedinApiBaseUrl;
+  // Validate URL format (basic URL characters only)
+  const sanitizedUrl = String(options.pluggedinApiBaseUrl).replace(/[^a-zA-Z0-9:/.\\-_]/g, '');
+  // Basic URL validation
+  try {
+    new URL(sanitizedUrl);
+    process.env.PLUGGEDIN_API_BASE_URL = sanitizedUrl;
+  } catch (error) {
+    console.error("Invalid API base URL provided");
+    process.exit(1);
+  }
 }
 
 async function main() {

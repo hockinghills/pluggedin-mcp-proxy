@@ -205,6 +205,38 @@ sequenceDiagram
 4. **Request Routing**: Requests are routed to the appropriate underlying MCP server
 5. **Response Handling**: Responses from the underlying servers are returned to the client
 
+## 🔒 Security Features
+
+The plugged.in MCP Proxy implements comprehensive security measures to protect your system and data:
+
+### Input Validation & Sanitization
+- **Command Injection Prevention**: All commands and arguments are validated against allowlists before execution
+- **Environment Variable Security**: Secure parsing of `.env` files with proper handling of quotes and multiline values
+- **Token Validation**: Strong regex patterns for API keys and authentication tokens (32-64 hex characters)
+
+### Network Security
+- **SSRF Protection**: URL validation blocks access to localhost and private IP ranges
+- **Rate Limiting**: 
+  - Tool calls: 60 requests per minute
+  - API calls: 100 requests per minute
+- **Error Sanitization**: Prevents information disclosure by sanitizing error messages
+
+### Process Security
+- **Safe Command Execution**: Uses `execFile()` instead of `exec()` to prevent shell injection
+- **Argument Sanitization**: Removes shell metacharacters and control characters from all arguments
+- **Environment Variable Validation**: Only allows alphanumeric keys with underscores
+
+### Security Utilities
+A dedicated `security-utils.ts` module provides:
+- Bearer token validation
+- URL validation with SSRF protection
+- Command argument sanitization
+- Environment variable validation
+- Rate limiting implementation
+- Error message sanitization
+
+For detailed security implementation, see [SECURITY.md](SECURITY.md).
+
 ## 🧩 Integration with plugged.in App
 
 The plugged.in MCP Proxy Server is designed to work seamlessly with the [plugged.in App](https://github.com/VeriTeknik/pluggedin-app), which provides:
@@ -226,6 +258,41 @@ The plugged.in MCP Proxy Server is designed to work seamlessly with the [plugged
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📝 Recent Updates
+
+### Version 0.5.12 (Latest)
+
+#### Bug Fixes
+- **Fixed localhost URL validation**: Allow localhost URLs for API base URL to support development environments
+- **Fixed API key sanitization**: Removed overly aggressive sanitization that was breaking API keys in inspector scripts
+- **Fixed environment variable loading**: Improved .env.local parsing in inspector scripts
+
+### Version 0.5.11
+
+#### Bug Fixes
+- **Fixed JSON-RPC Protocol Interference**: Moved all logging from stdout to stderr to prevent "[Notificati..." errors
+- **MCP Protocol Compliance**: Ensured stdout is used exclusively for JSON-RPC messages
+
+### Version 0.5.10
+
+#### New Features
+- **RAG Query Tool**: Added `pluggedin_rag_query` tool for performing RAG queries against documents in the authenticated user's project
+- **Custom Notifications**: Added `pluggedin_send_notification` tool for sending notifications through the plugged.in system with optional email delivery
+- **Activity Logging**: Comprehensive MCP activity notifications for monitoring and debugging
+
+#### Security Enhancements
+- **Command Injection Prevention**: Replaced `exec()` with `execFile()` and added input validation
+- **Environment Variable Security**: Implemented secure `.env` parsing with proper quote handling
+- **Token Validation**: Strengthened regex patterns for API keys (32-64 hex characters)
+- **SSRF Protection**: Added URL validation to block localhost and private IP access
+- **Rate Limiting**: Implemented per-minute limits for tool calls (60/min) and API calls (100/min)
+- **Error Sanitization**: Prevents information disclosure in error responses
+
+#### Performance Improvements
+- **Optimized Startup**: Streamlined initialization process
+- **Better Error Handling**: More informative error messages with proper sanitization
+- **Session Management**: Improved session cleanup and memory management
 
 ## 📄 License
 
