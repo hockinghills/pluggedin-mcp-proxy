@@ -3,8 +3,9 @@
 <div align="center">
   <img src="https://plugged.in/_next/image?url=%2Fpluggedin-wl.png&w=256&q=75" alt="plugged.in Logo" width="256" height="75">
   <h3>The Crossroads for AI Data Exchanges</h3>
-  <p>A unified interface for managing all your MCP servers</p>
+  <p>A unified interface for managing all your MCP servers with real-time notifications</p>
 
+  [![Version](https://img.shields.io/badge/version-1.0.0-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
   [![GitHub Stars](https://img.shields.io/github/stars/VeriTeknik/pluggedin-mcp?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/stargazers)
   [![License](https://img.shields.io/github/license/VeriTeknik/pluggedin-mcp?style=for-the-badge)](LICENSE)
   [![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
@@ -19,14 +20,21 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 
 ## ✨ Key Features
 
+### 🚀 Core Capabilities
 - **Universal MCP Compatibility**: Works with any MCP client including Claude Desktop, Cline, and Cursor
 - **Multi-Server Support**: Connect both STDIO (command-line) and WebSocket (HTTP-based) MCP servers
 - **Namespace Isolation**: Keep joined MCPs separate and organized with proper prefixing
 - **Multi-Workspace Layer**: Switch between different sets of MCP configurations with one click
-- **Simplified Architecture**: Streamlined codebase with improved startup time and reduced complexity
 - **API-Driven Proxy**: Fetches capabilities from plugged.in App APIs rather than direct discovery
 - **Full MCP Support**: Handles tools, resources, resource templates, and prompts
 - **Custom Instructions**: Supports server-specific instructions formatted as MCP prompts
+
+### 🔔 New in v1.0.0
+- **Real-Time Notifications**: Track all MCP activities with comprehensive notification support
+- **RAG Integration**: Support for document-enhanced queries through the plugged.in App
+- **Enhanced Security**: Industry-standard input validation and sanitization
+- **Inspector Scripts**: Automated testing tools for debugging and development
+- **Health Monitoring**: Built-in ping endpoint for connection monitoring
 
 ## 🚀 Quick Start
 
@@ -38,8 +46,17 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 ### Installation
 
 ```bash
-# Install and run with npx
+# Install and run with npx (latest v1.0.0)
 npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY
+```
+
+### 🔄 Upgrading to v1.0.0
+
+For existing installations, see our [Migration Guide](./MIGRATION_GUIDE_v1.0.0.md) for detailed upgrade instructions.
+
+```bash
+# Quick upgrade
+npx -y @pluggedin/mcp-proxy@1.0.0 --pluggedin-api-key YOUR_API_KEY
 ```
 
 ### Configuration for MCP Clients
@@ -261,38 +278,33 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📝 Recent Updates
 
-### Version 0.5.12 (Latest)
+### Version 1.0.0 (June 2025)
 
-#### Bug Fixes
-- **Fixed localhost URL validation**: Allow localhost URLs for API base URL to support development environments
-- **Fixed API key sanitization**: Removed overly aggressive sanitization that was breaking API keys in inspector scripts
-- **Fixed environment variable loading**: Improved .env.local parsing in inspector scripts
+#### 🎯 Major Features
+- **Real-Time Notification System**: Track all MCP activities with comprehensive notification support
+- **RAG Integration**: Support for document-enhanced queries through the plugged.in App
+- **Inspector Scripts**: New automated testing tools for debugging and development
+- **Health Monitoring**: Built-in ping endpoint for connection monitoring
 
-### Version 0.5.11
-
-#### Bug Fixes
-- **Fixed JSON-RPC Protocol Interference**: Moved all logging from stdout to stderr to prevent "[Notificati..." errors
-- **MCP Protocol Compliance**: Ensured stdout is used exclusively for JSON-RPC messages
-
-### Version 0.5.10
-
-#### New Features
-- **RAG Query Tool**: Added `pluggedin_rag_query` tool for performing RAG queries against documents in the authenticated user's project
-- **Custom Notifications**: Added `pluggedin_send_notification` tool for sending notifications through the plugged.in system with optional email delivery
-- **Activity Logging**: Comprehensive MCP activity notifications for monitoring and debugging
-
-#### Security Enhancements
-- **Command Injection Prevention**: Replaced `exec()` with `execFile()` and added input validation
-- **Environment Variable Security**: Implemented secure `.env` parsing with proper quote handling
-- **Token Validation**: Strengthened regex patterns for API keys (32-64 hex characters)
-- **SSRF Protection**: Added URL validation to block localhost and private IP access
-- **Rate Limiting**: Implemented per-minute limits for tool calls (60/min) and API calls (100/min)
+#### 🔒 Security Enhancements
+- **Input Validation**: Industry-standard validation and sanitization for all inputs
+- **URL Security**: Enhanced URL validation with SSRF protection
+- **Environment Security**: Secure parsing of environment variables with dotenv
 - **Error Sanitization**: Prevents information disclosure in error responses
 
-#### Performance Improvements
-- **Optimized Startup**: Streamlined initialization process
-- **Better Error Handling**: More informative error messages with proper sanitization
-- **Session Management**: Improved session cleanup and memory management
+#### 🐛 Bug Fixes
+- Fixed JSON-RPC protocol interference (stdout vs stderr separation)
+- Resolved localhost URL validation for development environments
+- Fixed API key handling in inspector scripts
+- Improved connection stability and memory management
+
+#### 🔧 Developer Tools
+- New inspector scripts for automated testing
+- Improved error messages and debugging capabilities
+- Structured logging with proper stderr usage
+- Enhanced TypeScript type safety
+
+See [Release Notes](./RELEASE_NOTES_v1.0.0.md) for complete details.
 
 ## 📄 License
 
