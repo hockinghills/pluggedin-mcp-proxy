@@ -13,10 +13,14 @@ export interface ServerParameters {
   args?: string[] | null; // Keep null possibility
   env?: Record<string, string> | null; // Keep null possibility
   url?: string | null; // For SSE servers, keep null possibility
-  type: 'STDIO' | 'SSE'; // Type of server connection
+  type: 'STDIO' | 'SSE' | 'STREAMABLE_HTTP'; // Type of server connection
   created_at?: string; // Added (optional based on original)
   profile_uuid?: string; // Added (optional based on original)
   status?: string; // Added (optional based on original)
+  // Streamable HTTP specific fields
+  oauthToken?: string; // OAuth token for authentication
+  headers?: Record<string, string>; // Custom headers for requests
+  sessionId?: string; // Session ID for stateful connections
   // Add other relevant fields fetched from the API if needed
 }
 
