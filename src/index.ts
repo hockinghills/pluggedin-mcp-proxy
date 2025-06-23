@@ -3,6 +3,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./mcp-proxy.js";
 import { Command } from "commander";
+import { startStreamableHTTPServer } from "./streamable-http.js";
 // import { reportAllCapabilities } from "./report-tools.js"; // Removed reporting
 // import { cleanupAllSessions } from "./sessions.js"; // Cleanup handled by createServer return
 
@@ -18,6 +19,24 @@ program
   .option(
     "--pluggedin-api-base-url <url>",
     "Base URL for PluggedinMCP API (can also be set via PLUGGEDIN_API_BASE_URL env var)"
+  )
+  .option(
+    "--transport <type>",
+    "Transport type: stdio (default) or streamable-http",
+    "stdio"
+  )
+  .option(
+    "--port <number>",
+    "Port for Streamable HTTP server (default: 12006)",
+    "12006"
+  )
+  .option(
+    "--stateless",
+    "Enable stateless mode for Streamable HTTP (new transport per request)"
+  )
+  .option(
+    "--require-api-auth",
+    "Require API key authentication for Streamable HTTP requests"
   )
   // Removed --report option
   .parse(process.argv);
@@ -49,43 +68,56 @@ async function main() {
   // Removed --report flag handling
 
   try {
-    // Removed initial tool discovery/reporting during startup
-    // console.log("Starting initial tool discovery..."); // REMOVED - Cannot log to stdout
-    // await reportAllTools(); // REMOVED - This was causing slow startup/timeouts
-    // console.log("Initial tool discovery completed"); // REMOVED - Cannot log to stdout
+    // Create the MCP server
+    const { server, cleanup: serverCleanup } = await createServer();
+    
+    // Initialize transport based on the selected type
+    let transportCleanup: (() => Promise<void>) | null = null;
+    
+    if (options.transport === 'streamable-http') {
+      // Streamable HTTP transport
+      const port = parseInt(options.port, 10) || 12006;
+      console.log(`Starting Streamable HTTP server on port ${port}...`);
+      
+      transportCleanup = await startStreamableHTTPServer(server, {
+        port,
+        requireApiAuth: options.requireApiAuth,
+        stateless: options.stateless
+      });
+      
+      // For HTTP server, we don't need to handle stdin
+    } else {
+      // Default to STDIO transport
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+      
+      // Cleanup function for STDIO
+      transportCleanup = async () => {
+        await transport.close();
+      };
+      
+      // Handle stdin for STDIO mode
+      process.stdin.resume();
+      process.stdin.on("end", () => process.exit(0));
+      process.stdin.on("close", () => process.exit(0));
+    }
 
-    // Then create and start the server
-    const transport = new StdioServerTransport();
-    const { server, cleanup } = await createServer();
+    // Combined cleanup handler
+    const handleExit = async () => {
+      await serverCleanup();
+      if (transportCleanup) {
+        await transportCleanup();
+      }
+      await server.close();
+      process.exit(0);
+    };
 
-    // Connect the server to the transport
-  await server.connect(transport);
-
-  // Note: Debug logging for raw outgoing messages needs to be implemented
-  // within the transport layer or by modifying the SDK if direct access is needed.
-  // The wrapper attempt here was incorrect due to type mismatches.
-
-  const handleExit = async () => {
-    await cleanup();
-    await transport.close();
-    await server.close();
-    process.exit(0);
-  };
-
-  // Cleanup on exit
-  process.on("SIGINT", handleExit);
-  process.on("SIGTERM", handleExit);
-
-  process.stdin.resume();
-  process.stdin.on("end", handleExit);
-  process.stdin.on("close", handleExit);
-
-  // Start listening (moved inside try block)
-  // Note: The original code didn't explicitly call listen, assuming connect handles it.
-  // If listen() is needed, it should be called here. Assuming connect is sufficient based on original code.
+    // Cleanup on exit signals
+    process.on("SIGINT", handleExit);
+    process.on("SIGTERM", handleExit);
 
   } catch (error) {
-    // Catch errors during startup, including reportAllTools
+    // Catch errors during startup
     console.error("Error during startup:", error);
     process.exit(1); // Exit if startup fails
   }

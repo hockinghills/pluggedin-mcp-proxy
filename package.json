@@ -1,7 +1,7 @@
 {
   "name": "@pluggedin/pluggedin-mcp-proxy",
-  "version": "1.0.0",
-  "description": "MCP Server PluggedinMCP manages all your other MCPs in one MCP.",
+  "version": "1.1.0",
+  "description": "MCP Proxy Server that aggregates multiple MCP servers with support for STDIO, SSE, and Streamable HTTP transports.",
   "scripts": {
     "build": "tsc && shx chmod +x dist/*.js",
     "watch": "tsc --watch",
@@ -23,17 +23,19 @@
   },
   "homepage": "https://github.com/VeriTeknik/pluggedin-mcp-proxy#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.13.0",
-    "axios": "^1.7.9",
+    "@modelcontextprotocol/sdk": "^1.13.1",
+    "axios": "^1.10.0",
     "commander": "^13.1.0",
-    "zod": "^3.24.2",
+    "express": "^5.1.0",
+    "zod": "^3.25.67",
     "zod-to-json-schema": "^3.24.5"
   },
   "devDependencies": {
+    "@types/express": "^5.0.3",
     "@types/node": "^22.13.4",
     "dotenv-cli": "^8.0.0",
     "shx": "^0.3.4",
-    "typescript": "^5.7.3"
+    "typescript": "^5.8.3"
   },
   "type": "module",
   "bin": {

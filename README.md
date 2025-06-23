@@ -5,7 +5,7 @@
   <h3>The Crossroads for AI Data Exchanges</h3>
   <p>A unified interface for managing all your MCP servers with real-time notifications</p>
 
-  [![Version](https://img.shields.io/badge/version-1.0.0-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
+  [![Version](https://img.shields.io/badge/version-1.1.0-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
   [![GitHub Stars](https://img.shields.io/github/stars/VeriTeknik/pluggedin-mcp?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/stargazers)
   [![License](https://img.shields.io/github/license/VeriTeknik/pluggedin-mcp?style=for-the-badge)](LICENSE)
   [![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
@@ -22,7 +22,8 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 
 ### 🚀 Core Capabilities
 - **Universal MCP Compatibility**: Works with any MCP client including Claude Desktop, Cline, and Cursor
-- **Multi-Server Support**: Connect both STDIO (command-line) and WebSocket (HTTP-based) MCP servers
+- **Multi-Server Support**: Connect to STDIO, SSE, and Streamable HTTP MCP servers
+- **Dual Transport Modes**: Run proxy as STDIO (default) or Streamable HTTP server
 - **Namespace Isolation**: Keep joined MCPs separate and organized with proper prefixing
 - **Multi-Workspace Layer**: Switch between different sets of MCP configurations with one click
 - **API-Driven Proxy**: Fetches capabilities from plugged.in App APIs rather than direct discovery
@@ -35,6 +36,8 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 - **Enhanced Security**: Industry-standard input validation and sanitization
 - **Inspector Scripts**: Automated testing tools for debugging and development
 - **Health Monitoring**: Built-in ping endpoint for connection monitoring
+- **Streamable HTTP Support**: Connect to modern Streamable HTTP MCP servers
+- **HTTP Server Mode**: Run the proxy as an HTTP server for web-based access
 
 ## 🚀 Quick Start
 
@@ -122,10 +125,77 @@ Command line arguments take precedence over environment variables:
 npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY --pluggedin-api-base-url https://your-custom-url.com
 ```
 
+#### Transport Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--transport <type>` | Transport type: `stdio` or `streamable-http` | `stdio` |
+| `--port <number>` | Port for Streamable HTTP server | `12006` |
+| `--stateless` | Enable stateless mode for Streamable HTTP | `false` |
+| `--require-api-auth` | Require API key for Streamable HTTP requests | `false` |
+
 For a complete list of options:
 
 ```bash
 npx -y @pluggedin/mcp-proxy@latest --help
+```
+
+## 🌐 Streamable HTTP Mode
+
+The proxy can run as an HTTP server instead of STDIO, enabling web-based access and remote connections.
+
+### Basic Usage
+
+```bash
+# Run as HTTP server on default port (12006)
+npx -y @pluggedin/mcp-proxy@latest --transport streamable-http --pluggedin-api-key YOUR_API_KEY
+
+# Custom port
+npx -y @pluggedin/mcp-proxy@latest --transport streamable-http --port 8080 --pluggedin-api-key YOUR_API_KEY
+
+# With authentication required
+npx -y @pluggedin/mcp-proxy@latest --transport streamable-http --require-api-auth --pluggedin-api-key YOUR_API_KEY
+
+# Stateless mode (new session per request)
+npx -y @pluggedin/mcp-proxy@latest --transport streamable-http --stateless --pluggedin-api-key YOUR_API_KEY
+```
+
+### HTTP Endpoints
+
+- `POST /mcp` - Send MCP messages
+- `GET /mcp` - Server-sent events stream (optional)
+- `DELETE /mcp` - Terminate session
+- `GET /health` - Health check endpoint
+
+### Session Management
+
+In stateful mode (default), use the `mcp-session-id` header to maintain sessions:
+
+```bash
+# First request creates a session
+curl -X POST http://localhost:12006/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+
+# Subsequent requests use the same session
+curl -X POST http://localhost:12006/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "mcp-session-id: YOUR_SESSION_ID" \
+  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"tool_name"},"id":2}'
+```
+
+### Authentication
+
+When using `--require-api-auth`, include your API key as a Bearer token:
+
+```bash
+curl -X POST http://localhost:12006/mcp \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","method":"ping","id":1}'
 ```
 
 ## 🐳 Docker Usage
@@ -144,7 +214,9 @@ A `.dockerignore` file is included to optimize the build context.
 
 ### Running the Container
 
-Run the container, providing the necessary environment variables:
+#### STDIO Mode (Default)
+
+Run the container in STDIO mode for MCP Inspector testing:
 
 ```bash
 docker run -it --rm \
@@ -152,6 +224,20 @@ docker run -it --rm \
   -e PLUGGEDIN_API_BASE_URL="YOUR_API_BASE_URL" \
   --name pluggedin-mcp-container \
   pluggedin-mcp-proxy:latest
+```
+
+#### Streamable HTTP Mode
+
+Run the container as an HTTP server:
+
+```bash
+docker run -d --rm \
+  -e PLUGGEDIN_API_KEY="YOUR_API_KEY" \
+  -e PLUGGEDIN_API_BASE_URL="YOUR_API_BASE_URL" \
+  -p 12006:12006 \
+  --name pluggedin-mcp-http \
+  pluggedin-mcp-proxy:latest \
+  --transport streamable-http --port 12006
 ```
 
 Replace `YOUR_API_KEY` and `YOUR_API_BASE_URL` (if not using the default `https://plugged.in`).
@@ -277,6 +363,20 @@ The plugged.in MCP Proxy Server is designed to work seamlessly with the [plugged
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📝 Recent Updates
+
+### Version 1.1.0 (January 2025)
+
+#### 🚀 New Features
+- **Streamable HTTP Support**: Connect to downstream MCP servers using the modern Streamable HTTP transport
+- **HTTP Server Mode**: Run the proxy as an HTTP server for web-based access
+- **Flexible Session Management**: Choose between stateless or stateful modes
+- **Authentication Options**: Optional Bearer token authentication for HTTP endpoints
+- **Health Monitoring**: `/health` endpoint for service monitoring
+
+#### 🔧 Technical Improvements
+- Updated MCP SDK to v1.13.0 for latest protocol support
+- Added Express.js integration for HTTP server functionality
+- Enhanced TypeScript types for better developer experience
 
 ### Version 1.0.0 (June 2025)
 
