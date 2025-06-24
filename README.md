@@ -406,6 +406,39 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 See [Release Notes](./RELEASE_NOTES_v1.0.0.md) for complete details.
 
+## 🧪 Testing and Development
+
+### Local Development
+Tests are included for development purposes but are excluded from Docker builds to minimize the container footprint.
+
+```bash
+# Run tests locally
+npm test
+# or
+./scripts/test-local.sh
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run tests with UI
+npm run test:ui
+```
+
+### Lightweight Docker Builds
+The Docker image is optimized for minimal footprint:
+- Multi-stage build process
+- Only production dependencies in final image
+- Test files and dev dependencies excluded
+- Optimized for resource-constrained environments
+
+```bash
+# Build optimized Docker image
+docker build -t pluggedin-mcp .
+
+# Check image size
+docker images pluggedin-mcp
+```
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

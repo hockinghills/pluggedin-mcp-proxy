@@ -114,6 +114,12 @@ export async function startStreamableHTTPServer(
             await transport.close();
             transports.delete(sessionId);
             res.status(200).json({ success: true, message: 'Session terminated' });
+          } else if (!stateless && sessionId && !transports.has(sessionId)) {
+            // Session ID provided but doesn't exist - return success as nothing to delete
+            res.status(200).json({ success: true, message: 'Session not found' });
+          } else if (stateless) {
+            // In stateless mode, always return success
+            res.status(200).json({ success: true, message: 'Stateless mode - no session to terminate' });
           } else {
             res.status(404).json({
               jsonrpc: '2.0',

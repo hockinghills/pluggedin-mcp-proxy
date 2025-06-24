@@ -13,7 +13,10 @@ dist
 # src
 
 # Test files
+tests/
 *.test.ts
+*.spec.ts
+vitest.config.ts
 jest.config.js
 
 # Configuration files
