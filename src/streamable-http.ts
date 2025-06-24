@@ -39,19 +39,35 @@ export async function startStreamableHTTPServer(
       return res.sendStatus(200);
     }
 
-    // Authentication check for /mcp endpoint
-    if (req.path === '/mcp' && requireApiAuth) {
-      const authHeader = req.headers.authorization;
-      const apiKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-      
-      if (!apiKey || apiKey !== process.env.PLUGGEDIN_API_KEY) {
-        return res.status(401).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32000,
-            message: 'Unauthorized: Invalid or missing API key'
+    // Lazy authentication - only check for tool invocations
+    if (req.path === '/mcp' && requireApiAuth && req.method === 'POST') {
+      // Parse the request body to check if it's a tool invocation
+      const body = req.body;
+      if (body && typeof body === 'object') {
+        const method = body.method;
+        // Only require auth for tool/resource calls, not for capability discovery
+        const requiresAuth = method && (
+          method.startsWith('tools/') || 
+          method.startsWith('resources/') ||
+          method === 'tools/call' ||
+          method === 'resources/read'
+        );
+        
+        if (requiresAuth) {
+          const authHeader = req.headers.authorization;
+          const apiKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+          
+          if (!apiKey || apiKey !== process.env.PLUGGEDIN_API_KEY) {
+            return res.status(401).json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32000,
+                message: 'Unauthorized: Invalid or missing API key'
+              },
+              id: body.id || null
+            });
           }
-        });
+        }
       }
     }
     
@@ -159,7 +175,7 @@ export async function startStreamableHTTPServer(
   });
 
   // Health check endpoint
-  app.get('/health', (req: any, res: any) => {
+  app.get('/health', (_req: any, res: any) => {
     res.json({ 
       status: 'ok', 
       transport: 'streamable-http',

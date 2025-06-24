@@ -143,12 +143,19 @@ export const createServer = async () => {
      }
      
      let fetchedTools: (Tool & { _serverUuid: string, _serverName?: string })[] = [];
+     const apiKey = getPluggedinMCPApiKey();
+     const baseUrl = getPluggedinMCPApiBaseUrl();
+     
+     // If no API key, return only static tools (for Smithery compatibility)
+     if (!apiKey || !baseUrl) {
+       console.log("[ListTools Handler] No API key configured, returning static tools only");
+       return { 
+         tools: [discoverToolsStaticTool, ragQueryStaticTool, sendNotificationStaticTool], 
+         nextCursor: undefined 
+       };
+     }
+     
      try {
-       const apiKey = getPluggedinMCPApiKey();
-       const baseUrl = getPluggedinMCPApiBaseUrl();
-       if (!apiKey || !baseUrl) {
-         throw new Error("Pluggedin API Key or Base URL is not configured.");
-       }
 
        const apiUrl = `${baseUrl}/api/tools`; // Assuming this is the correct endpoint
 
