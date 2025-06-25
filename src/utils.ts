@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { ServerParameters } from "./types.js"; // Corrected import path
-import { validateBearerToken, validateUrl, validateApiUrl, validateEnvVarName } from "./security-utils.js";
+import { validateBearerToken, validateApiUrl, validateEnvVarName } from "./security-utils.js";
 import { debugError } from "./debug-log.js";
 
 export const getSessionKey = (uuid: string, params: ServerParameters): string => {
@@ -27,11 +27,10 @@ export const getPluggedinMCPApiKey = (apiKey?: string): string | undefined => {
   return key;
 };
 
-// Helper function to get the API base URL, prioritizing argument, then env var
+// Helper function to get the API base URL, prioritizing argument, then env var, then default
 export const getPluggedinMCPApiBaseUrl = (baseUrl?: string): string | undefined => {
-  // Prioritize argument, then environment variable
-  // Don't provide a default - if no URL is explicitly set, return undefined
-  const url = baseUrl ?? process.env.PLUGGEDIN_API_BASE_URL;
+  // Prioritize argument, then environment variable, then default to https://plugged.in
+  const url = baseUrl ?? process.env.PLUGGEDIN_API_BASE_URL ?? 'https://plugged.in';
   
   if (!url) {
     return undefined;
