@@ -1,16 +1,13 @@
 # Build stage
 FROM node:20-slim AS builder
 
-# Install pnpm
-RUN npm install -g pnpm
-
 WORKDIR /app
 
 # Copy package files
-COPY package*.json pnpm-lock.yaml ./
+COPY package*.json ./
 
 # Install all dependencies (including dev dependencies for building)
-RUN pnpm install --frozen-lockfile
+RUN npm ci
 
 # Copy source code
 COPY . .
@@ -21,16 +18,13 @@ RUN npm run build
 # Production stage
 FROM node:20-slim
 
-# Install pnpm
-RUN npm install -g pnpm
-
 WORKDIR /app
 
 # Copy package files
-COPY package*.json pnpm-lock.yaml ./
+COPY package*.json ./
 
 # Install only production dependencies
-RUN pnpm install --frozen-lockfile --prod
+RUN npm ci --only=production
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist

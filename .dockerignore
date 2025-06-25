@@ -23,8 +23,8 @@ jest.config.js
 # tsconfig.json is needed for the build step inside Docker
 # tsconfig.json
 .env*
-pnpm-lock.yaml # Keep if running pnpm install in Dockerfile
-package-lock.json # If npm is used
+pnpm-lock.yaml # Not used anymore - switched to npm
+# package-lock.json # Keep for npm ci in Dockerfile
 yarn.lock # If yarn is used
 .clinerules
 

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2025-01-25
+
+### Changed
+- Switched from pnpm to npm for dependency management
+- Updated Dockerfile to use `npm ci` instead of `pnpm install`
+- Updated .dockerignore to exclude pnpm-lock.yaml and include package-lock.json
+
+### Fixed
+- Resolved "pnpm-lock.yaml is not up to date" error during Docker builds
+- Fixed dependency version mismatches in lockfile
+
+## [1.2.1] - 2025-01-25
+
+### Fixed
+- Removed smithery.yaml from .dockerignore to fix Docker build issues on Smithery platform
+- Resolved "smithery.yaml not found" error during Docker image creation
+
 ## [1.2.0] - 2025-01-25
 
 ### Added
