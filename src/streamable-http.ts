@@ -2,6 +2,7 @@ import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { randomUUID } from 'crypto';
+import { debugLog, debugError } from './debug-log.js';
 
 // Map to store active transports by session ID (for stateful mode)
 const transports = new Map<string, StreamableHTTPServerTransport>();
@@ -98,7 +99,7 @@ export async function startStreamableHTTPServer(
           transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => sessionId!,
             onsessioninitialized: (id) => {
-              console.log(`Session initialized: ${id}`);
+              debugLog(`Session initialized: ${id}`);
             }
           });
           transports.set(sessionId, transport);
@@ -162,7 +163,7 @@ export async function startStreamableHTTPServer(
         await transport.close();
       }
     } catch (error) {
-      console.error('Error handling request:', error);
+      debugError('Error handling request:', error);
       res.status(500).json({
         jsonrpc: '2.0',
         error: {
@@ -185,14 +186,14 @@ export async function startStreamableHTTPServer(
 
   // Start the Express server
   const httpServer = app.listen(port, () => {
-    console.log(`Streamable HTTP server listening on port ${port}`);
+    debugLog(`Streamable HTTP server listening on port ${port}`);
     if (stateless) {
-      console.log('Running in stateless mode');
+      debugLog('Running in stateless mode');
     } else {
-      console.log('Running in stateful mode (session-based)');
+      debugLog('Running in stateful mode (session-based)');
     }
     if (requireApiAuth) {
-      console.log('API authentication required');
+      debugLog('API authentication required');
     }
   });
 
@@ -203,7 +204,7 @@ export async function startStreamableHTTPServer(
       try {
         await transport.close();
       } catch (error) {
-        console.error(`Error closing transport for session ${sessionId}:`, error);
+        debugError(`Error closing transport for session ${sessionId}:`, error);
       }
     }
     transports.clear();
@@ -211,7 +212,7 @@ export async function startStreamableHTTPServer(
     // Close the HTTP server
     return new Promise((resolve) => {
       httpServer.close(() => {
-        console.log('Streamable HTTP server stopped');
+        debugLog('Streamable HTTP server stopped');
         resolve();
       });
     });

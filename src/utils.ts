@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { ServerParameters } from "./types.js"; // Corrected import path
 import { validateBearerToken, validateUrl, validateApiUrl, validateEnvVarName } from "./security-utils.js";
+import { debugError } from "./debug-log.js";
 
 export const getSessionKey = (uuid: string, params: ServerParameters): string => {
   const hash = crypto.createHash("sha256");
@@ -19,21 +20,26 @@ export const getPluggedinMCPApiKey = (apiKey?: string): string | undefined => {
   
   // Validate token format if present
   if (key && !validateBearerToken(key)) {
-    console.error("Invalid API key format detected");
+    debugError("Invalid API key format detected");
     return undefined;
   }
   
   return key;
 };
 
-// Helper function to get the API base URL, prioritizing argument, then env var, then hardcoded default
+// Helper function to get the API base URL, prioritizing argument, then env var
 export const getPluggedinMCPApiBaseUrl = (baseUrl?: string): string | undefined => {
-  // Prioritize argument, then environment variable, then fallback
-  const url = baseUrl ?? process.env.PLUGGEDIN_API_BASE_URL ?? 'https://plugged.in';
+  // Prioritize argument, then environment variable
+  // Don't provide a default - if no URL is explicitly set, return undefined
+  const url = baseUrl ?? process.env.PLUGGEDIN_API_BASE_URL;
+  
+  if (!url) {
+    return undefined;
+  }
   
   // Validate URL format (use validateApiUrl which allows localhost)
   if (!validateApiUrl(url)) {
-    console.error("Invalid API base URL format detected");
+    debugError("Invalid API base URL format detected");
     return undefined;
   }
   

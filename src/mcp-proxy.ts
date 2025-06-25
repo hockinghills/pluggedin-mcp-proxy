@@ -34,6 +34,7 @@ import { createRequire } from 'module';
 import { ToolExecutionResult, ServerParameters } from "./types.js"; // Import ServerParameters
 import { logMcpActivity, createExecutionTimer } from "./notification-logger.js";
 import { RateLimiter, sanitizeErrorMessage } from "./security-utils.js";
+import { debugLog, debugError } from "./debug-log.js";
 // Removed incorrect McpMessage import
 
 const require = createRequire(import.meta.url);
@@ -142,23 +143,25 @@ export const createServer = async () => {
 
   // List Tools Handler - Fetches tools from Pluggedin App API and adds static tool
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
-     // Rate limit check
-     if (!apiCallRateLimiter.checkLimit()) {
-       throw new Error("Rate limit exceeded. Please try again later.");
-     }
-     
-     let fetchedTools: (Tool & { _serverUuid: string, _serverName?: string })[] = [];
      const apiKey = getPluggedinMCPApiKey();
      const baseUrl = getPluggedinMCPApiBaseUrl();
      
      // If no API key, return only static tools (for Smithery compatibility)
+     // This path should be fast and not rate limited for tool discovery
      if (!apiKey || !baseUrl) {
-       console.log("[ListTools Handler] No API key configured, returning static tools only");
+       // Don't log to console for STDIO transport as it interferes with protocol
        return { 
          tools: [discoverToolsStaticTool, ragQueryStaticTool, sendNotificationStaticTool], 
          nextCursor: undefined 
        };
      }
+     
+     // Rate limit check only for authenticated API calls
+     if (!apiCallRateLimiter.checkLimit()) {
+       throw new Error("Rate limit exceeded. Please try again later.");
+     }
+     
+     let fetchedTools: (Tool & { _serverUuid: string, _serverName?: string })[] = [];
      
      try {
 
@@ -188,7 +191,7 @@ export const createServer = async () => {
               serverUuid: tool._serverUuid 
             };
          } else {
-            console.error(`[ListTools Handler] Missing tool name or UUID for tool: ${tool.name}`);
+            debugError(`[ListTools Handler] Missing tool name or UUID for tool: ${tool.name}`);
          }
        });
 
@@ -210,7 +213,7 @@ export const createServer = async () => {
          // Only include status code, not full error details
          sanitizedError = `Failed to list tools (HTTP ${error.response.status})`;
        }
-       console.error("[ListTools Handler Error]", error); // Log full error internally
+       debugError("[ListTools Handler Error]", error); // Log full error internally
        throw new Error(sanitizedError);
      }
   });
@@ -228,7 +231,7 @@ export const createServer = async () => {
     try {
         // Handle static discovery tool first
         if (requestedToolName === discoverToolsStaticTool.name) {
-            console.error(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = DiscoverToolsInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
@@ -291,7 +294,7 @@ export const createServer = async () => {
 
         // Handle static RAG query tool
         if (requestedToolName === ragQueryStaticTool.name) {
-            console.error(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = RagQueryInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
@@ -357,7 +360,7 @@ export const createServer = async () => {
 
         // Handle static send notification tool
         if (requestedToolName === sendNotificationStaticTool.name) {
-            console.error(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = SendNotificationInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
@@ -447,7 +450,7 @@ export const createServer = async () => {
         }
 
         // Proxy the call to the downstream server using the original tool name
-        console.error(`[CallTool Proxy] Calling tool '${originalName}' on server ${serverUuid}`);
+        debugError(`[CallTool Proxy] Calling tool '${originalName}' on server ${serverUuid}`);
         const timer = createExecutionTimer();
         
         try {
@@ -487,7 +490,7 @@ export const createServer = async () => {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       // Use requestedToolName here, which is in scope
-      console.error(`[CallTool Handler Error] Tool: ${requestedToolName}, Error: ${errorMessage}`);
+      debugError(`[CallTool Handler Error] Tool: ${requestedToolName}, Error: ${errorMessage}`);
 
       // Re-throw the error for the SDK to format and send back to the client
       if (error instanceof Error) {
@@ -612,18 +615,18 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       if (name.startsWith(instructionPrefix)) {
         // --- Handle Custom Instruction Request ---
-        console.error(`[GetPrompt Handler] Detected custom instruction prefix for: ${name}`);
+        debugError(`[GetPrompt Handler] Detected custom instruction prefix for: ${name}`);
         const serverUuid = instructionToServerMap[name];
-        console.error(`[GetPrompt Handler] Looked up serverUuid from instructionToServerMap: ${serverUuid}`); // Log UUID lookup
+        debugError(`[GetPrompt Handler] Looked up serverUuid from instructionToServerMap: ${serverUuid}`); // Log UUID lookup
         if (!serverUuid) {
-           console.error(`[GetPrompt Handler] Current instructionToServerMap:`, JSON.stringify(instructionToServerMap)); // Log the map content
+           debugError(`[GetPrompt Handler] Current instructionToServerMap:`, JSON.stringify(instructionToServerMap)); // Log the map content
           throw new Error(`Server UUID not found in map for custom instruction: ${name}. Try listing prompts again.`);
         }
 
         // Call the new app API endpoint to get instruction details
         // This endpoint needs to be created: /api/custom-instructions/[uuid]
         const instructionApiUrl = `${baseUrl}/api/custom-instructions/${serverUuid}`;
-        console.error(`[GetPrompt Handler] Fetching instruction details from: ${instructionApiUrl}`);
+        debugError(`[GetPrompt Handler] Fetching instruction details from: ${instructionApiUrl}`);
 
         const timer = createExecutionTimer();
         
@@ -675,10 +678,10 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       } else {
         // --- Handle Standard Prompt Request (Existing Logic) ---
-        console.error(`[GetPrompt Handler] No custom instruction prefix detected for: ${name}. Proceeding with standard prompt resolution.`);
+        debugError(`[GetPrompt Handler] No custom instruction prefix detected for: ${name}. Proceeding with standard prompt resolution.`);
         // 1. Call the resolve API endpoint
         const resolveApiUrl = `${baseUrl}/api/resolve/prompt?name=${encodeURIComponent(name)}`;
-         console.error(`[GetPrompt Handler] Calling resolve API: ${resolveApiUrl}`); // Log API call
+         debugError(`[GetPrompt Handler] Calling resolve API: ${resolveApiUrl}`); // Log API call
         const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, {
           headers: { Authorization: `Bearer ${apiKey}` },
           timeout: 10000,
@@ -694,14 +697,14 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         const session = await getSession(sessionKey, serverParams.uuid, serverParams);
 
         if (!session) {
-          console.error(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+          debugError(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
           await initSessions();
           const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
           if (!refreshedSession) {
             throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling prompt: ${name}`);
           }
           // Use the refreshed session
-          console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
+          debugError(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
           const timer = createExecutionTimer();
           
           try {
@@ -737,7 +740,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
           }
         } else {
           // Use the existing session
-          console.error(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
+          debugError(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
           const timer = createExecutionTimer();
           
           try {
@@ -779,7 +782,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         : error instanceof Error
         ? error.message
         : `Unknown error getting prompt: ${name}`;
-      console.error("[GetPrompt Handler Error]", errorMessage);
+      debugError("[GetPrompt Handler Error]", errorMessage);
       throw new Error(`Failed to get prompt ${name}: ${errorMessage}`);
     }
   });
@@ -818,7 +821,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
           // Assert _serverUuid as string since the check ensures it's not undefined
           instructionToServerMap[instr.name] = instr._serverUuid as string;
         } else {
-            console.error(`[ListPrompts Handler] Missing name or _serverUuid for custom instruction:`, instr);
+            debugError(`[ListPrompts Handler] Missing name or _serverUuid for custom instruction:`, instr);
         }
       });
 
@@ -839,7 +842,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         : error instanceof Error
         ? error.message
         : "Unknown error fetching prompts or custom instructions from API";
-      console.error("[ListPrompts Handler Error]", errorMessage);
+      debugError("[ListPrompts Handler Error]", errorMessage);
       // Let SDK handle error formatting
       throw new Error(`Failed to list prompts: ${errorMessage}`);
     }
@@ -857,7 +860,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       const apiUrl = `${baseUrl}/api/resources`; // Assuming this is the correct endpoint
 
-      // console.error(`[Proxy - ListResources] Fetching from ${apiUrl}`); // Debug log
+      // debugError(`[Proxy - ListResources] Fetching from ${apiUrl}`); // Debug log
 
       const response = await axios.get<z.infer<typeof ListResourcesResultSchema>["resources"]>(apiUrl, {
         headers: {
@@ -869,7 +872,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
       // The API currently returns just the array, wrap it in the expected structure
       const resources = response.data || [];
 
-      // console.error(`[Proxy - ListResources] Received ${resources.length} resources from API.`); // Debug log
+      // debugError(`[Proxy - ListResources] Received ${resources.length} resources from API.`); // Debug log
 
       // Note: Pagination across servers via the API is not implemented here.
       // The API would need to support cursor-based pagination for this to work fully.
@@ -881,7 +884,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         : error instanceof Error
         ? error.message
         : "Unknown error fetching resources from API";
-      console.error("[ListResources Handler Error]", errorMessage);
+      debugError("[ListResources Handler Error]", errorMessage);
       // Let SDK handle error formatting
       throw new Error(`Failed to list resources: ${errorMessage}`);
     }
@@ -905,7 +908,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
         // 1. Call the new API endpoint to resolve the URI
         const resolveApiUrl = `${baseUrl}/api/resolve/resource?uri=${encodeURIComponent(uri)}`;
-        // console.error(`[ReadResource Handler] Resolving URI via: ${resolveApiUrl}`); // Optional debug log
+        // debugError(`[ReadResource Handler] Resolving URI via: ${resolveApiUrl}`); // Optional debug log
 
         const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, { // Expect ServerParameters type
             headers: { Authorization: `Bearer ${apiKey}` },
@@ -925,14 +928,14 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         if (!session) {
             // Attempt to re-initialize sessions if not found (might happen on proxy restart)
             // This is a potential area for improvement (e.g., caching serverParams)
-            console.error(`[ReadResource Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+            debugError(`[ReadResource Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
             await initSessions(); // Re-initialize all sessions
             const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
             if (!refreshedSession) {
                throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling URI: ${uri}`);
             }
              // Use the refreshed session
-             console.error(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
+             debugError(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
              const timer = createExecutionTimer();
              
              try {
@@ -968,7 +971,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
              }
         } else {
              // Use the existing session
-             console.error(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
+             debugError(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
              const timer = createExecutionTimer();
              
              try {
@@ -1010,7 +1013,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
             : error instanceof Error
             ? error.message
             : `Unknown error reading resource URI: ${uri}`;
-        console.error("[ReadResource Handler Error]", errorMessage);
+        debugError("[ReadResource Handler Error]", errorMessage);
         // Let SDK handle error formatting
         throw new Error(`Failed to read resource ${uri}: ${errorMessage}`);
     }
@@ -1027,7 +1030,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       const apiUrl = `${baseUrl}/api/resource-templates`; // New endpoint
 
-      // console.error(`[Proxy - ListResourceTemplates] Fetching from ${apiUrl}`); // Debug log
+      // debugError(`[Proxy - ListResourceTemplates] Fetching from ${apiUrl}`); // Debug log
 
       // Fetch the list of templates
       // Assuming the API returns ResourceTemplate[] directly
@@ -1040,7 +1043,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       const templates = response.data || [];
 
-      // console.error(`[Proxy - ListResourceTemplates] Received ${templates.length} templates from API.`); // Debug log
+      // debugError(`[Proxy - ListResourceTemplates] Received ${templates.length} templates from API.`); // Debug log
 
       // Wrap the array in the expected structure for the MCP response
       return { resourceTemplates: templates, nextCursor: undefined }; // Pagination not handled
@@ -1051,7 +1054,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         : error instanceof Error
         ? error.message
         : "Unknown error fetching resource templates from API";
-      console.error("[ListResourceTemplates Handler Error]", errorMessage);
+      debugError("[ListResourceTemplates Handler Error]", errorMessage);
       // Let SDK handle error formatting
       throw new Error(`Failed to list resource templates: ${errorMessage}`);
     }
@@ -1059,7 +1062,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
   // Ping Handler - Responds to simple ping requests
   server.setRequestHandler(PingRequestSchema, async (request) => {
-    console.error("[Ping Handler] Received ping request.");
+    debugError("[Ping Handler] Received ping request.");
     // Ping response should be an empty object for success
     return {};
   });

@@ -1,6 +1,6 @@
 {
   "name": "@pluggedin/pluggedin-mcp-proxy",
-  "version": "1.2.3",
+  "version": "1.2.5",
   "description": "MCP Proxy Server that aggregates multiple MCP servers with support for STDIO, SSE, and Streamable HTTP transports.",
   "scripts": {
     "build": "tsc && shx chmod +x dist/*.js",

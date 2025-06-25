@@ -77,6 +77,7 @@ async function main() {
     if (options.transport === 'streamable-http') {
       // Streamable HTTP transport
       const port = parseInt(options.port, 10) || 12006;
+      // Only log to console for HTTP transport, not STDIO
       console.log(`Starting Streamable HTTP server on port ${port}...`);
       
       transportCleanup = await startStreamableHTTPServer(server, {
@@ -118,13 +119,15 @@ async function main() {
 
   } catch (error) {
     // Catch errors during startup
-    console.error("Error during startup:", error);
+    if (options.transport === 'streamable-http') {
+      console.error("Error during startup:", error);
+    }
     process.exit(1); // Exit if startup fails
   }
 }
 
 // Keep the outer catch for any unhandled promise rejections from main itself
 main().catch((error) => {
-  console.error("Unhandled error in main execution:", error);
+  // Don't log to console for STDIO transport as it interferes with protocol
   process.exit(1); // Ensure exit on unhandled error
 });

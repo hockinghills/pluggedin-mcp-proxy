@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ServerParameters } from "./types.js";
 import { createRequire } from 'module';
+import { debugError } from './debug-log.js';
 // import { container } from './di-container.js'; // Removed DI container
 // import { Logger } from './logging.js'; // Removed Logger type
 
@@ -61,7 +62,7 @@ export const createPluggedinMCPClient = (
   if (!serverParams.type || serverParams.type === "STDIO") {
     // Validate command before use
     if (!serverParams.command || !validateCommand(serverParams.command)) {
-      console.error(`Invalid command for server ${serverParams.name}: ${serverParams.command}`);
+      debugError(`Invalid command for server ${serverParams.name}: ${serverParams.command}`);
       return { client: undefined, transport: undefined };
     }
 
@@ -79,12 +80,12 @@ export const createPluggedinMCPClient = (
       const url = new URL(serverParams.url);
       // Only allow http and https protocols
       if (!['http:', 'https:'].includes(url.protocol)) {
-        console.error(`Invalid protocol for SSE server ${serverParams.name}: ${url.protocol}`);
+        debugError(`Invalid protocol for SSE server ${serverParams.name}: ${url.protocol}`);
         return { client: undefined, transport: undefined };
       }
       transport = new SSEClientTransport(url);
     } catch (error) {
-      console.error(`Invalid URL for SSE server ${serverParams.name}: ${serverParams.url}`);
+      debugError(`Invalid URL for SSE server ${serverParams.name}: ${serverParams.url}`);
       return { client: undefined, transport: undefined };
     }
   } else if (serverParams.type === "STREAMABLE_HTTP" && serverParams.url) {
@@ -93,7 +94,7 @@ export const createPluggedinMCPClient = (
       const url = new URL(serverParams.url);
       // Only allow http and https protocols
       if (!['http:', 'https:'].includes(url.protocol)) {
-        console.error(`Invalid protocol for Streamable HTTP server ${serverParams.name}: ${url.protocol}`);
+        debugError(`Invalid protocol for Streamable HTTP server ${serverParams.name}: ${url.protocol}`);
         return { client: undefined, transport: undefined };
       }
       
@@ -124,7 +125,7 @@ export const createPluggedinMCPClient = (
       
       transport = new StreamableHTTPClientTransport(url, transportOptions);
     } catch (error) {
-      console.error(`Invalid URL for Streamable HTTP server ${serverParams.name}: ${serverParams.url}`);
+      debugError(`Invalid URL for Streamable HTTP server ${serverParams.name}: ${serverParams.url}`);
       return { client: undefined, transport: undefined };
     }
   } else {

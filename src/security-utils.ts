@@ -2,6 +2,8 @@
  * Security utility functions for input validation and sanitization
  */
 
+import { debugError } from './debug-log.js';
+
 /**
  * Validates a bearer token format
  * @param token - The token to validate
@@ -29,7 +31,7 @@ export function sanitizeErrorMessage(error: any, context: string): string {
   }
   
   // Log the full error internally for debugging
-  console.error(`[${context}] Full error:`, error);
+  debugError(`[${context}] Full error:`, error);
   
   return safeMessage;
 }

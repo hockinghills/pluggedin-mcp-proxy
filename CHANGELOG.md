@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2025-01-25
+
+### Fixed
+- Fixed Smithery tool discovery by removing default API base URL fallback
+- Moved rate limiting to only apply after authentication check
+- Static tools are now immediately available without API key for Smithery compatibility
+- Resolved "Request timed out" error during Smithery tool scanning
+
+### Changed
+- API base URL now returns undefined if not explicitly configured
+- Tool listing prioritizes static tools for unauthenticated requests
+- Smithery configuration updated to use stdio transport instead of streamable-http
+- Added PLUGGEDIN_API_BASE_URL to Smithery config schema
+
 ## [1.2.3] - 2025-01-25
 
 ### Changed
