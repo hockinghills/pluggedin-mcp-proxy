@@ -3,9 +3,9 @@
 <div align="center">
   <img src="https://plugged.in/_next/image?url=%2Fpluggedin-wl.png&w=256&q=75" alt="plugged.in Logo" width="256" height="75">
   <h3>The Crossroads for AI Data Exchanges</h3>
-  <p>A unified interface for managing all your MCP servers with real-time notifications</p>
+  <p>A unified interface for managing all your MCP servers with built-in playground for testing on any AI model</p>
 
-  [![Version](https://img.shields.io/badge/version-1.2.0-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
+  [![Version](https://img.shields.io/badge/version-1.2.6-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
   [![GitHub Stars](https://img.shields.io/github/stars/VeriTeknik/pluggedin-mcp?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/stargazers)
   [![License](https://img.shields.io/github/license/VeriTeknik/pluggedin-mcp?style=for-the-badge)](LICENSE)
   [![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
@@ -21,21 +21,24 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 ## ✨ Key Features
 
 ### 🚀 Core Capabilities
+- **Built-in AI Playground**: Test your MCPs instantly with Claude, Gemini, OpenAI, and xAI without any client setup
 - **Universal MCP Compatibility**: Works with any MCP client including Claude Desktop, Cline, and Cursor
 - **Multi-Server Support**: Connect to STDIO, SSE, and Streamable HTTP MCP servers
 - **Dual Transport Modes**: Run proxy as STDIO (default) or Streamable HTTP server
-- **Namespace Isolation**: Keep joined MCPs separate and organized with proper prefixing
+- **Unified Document Search**: Search across all connected servers with built-in RAG capabilities
+- **Notifications from Any Model**: Receive real-time notifications with optional email delivery
 - **Multi-Workspace Layer**: Switch between different sets of MCP configurations with one click
 - **API-Driven Proxy**: Fetches capabilities from plugged.in App APIs rather than direct discovery
 - **Full MCP Support**: Handles tools, resources, resource templates, and prompts
 - **Custom Instructions**: Supports server-specific instructions formatted as MCP prompts
 
-### 🔔 New in v1.2.0
+### 🔔 New in v1.2.6
 
-- **Enhanced Security Validations**: Comprehensive URL validation with SSRF protection, command allowlisting, and header sanitization
-- **Lazy Authentication**: Tool discovery without API keys for better Smithery compatibility
-- **Improved Session Management**: Better handling of session lifecycle in Streamable HTTP mode
-- **Production Optimizations**: Lightweight Docker builds optimized for resource-constrained environments
+- **Default API URL**: No configuration needed - defaults to https://plugged.in automatically
+- **Smithery Optimization**: Fixed STDIO transport issues for seamless Smithery deployment
+- **Silent Operation**: No console output interference with STDIO protocol
+- **Built-in Static Tools**: Tool discovery, RAG search, and notifications available without authentication
+- **Enhanced Debugging**: Smart debug logging that only activates for non-STDIO transports
 
 ### 📦 Features from v1.1.0
 

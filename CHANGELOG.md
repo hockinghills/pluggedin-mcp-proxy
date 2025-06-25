@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] - 2025-01-26
+
+### Added
+- Enhanced notification tool with optional title parameter support
+- Improved send notification tool schema with better documentation
+
+### Changed
+- Updated API base URL logic in utils.ts for better flexibility
+- Enhanced debug logging utilities throughout the codebase
+- Improved API handling and error messages
+
+### Fixed
+- Version consistency in package.json
+
+## [1.2.5] - 2025-01-25
+
+### Changed
+- Updated dependency management documentation from pnpm to npm
+- Improved README with npm-based commands for inspector scripts
+
 ## [1.2.4] - 2025-01-25
 
 ### Fixed
