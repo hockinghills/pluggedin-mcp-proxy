@@ -1,16 +1,21 @@
 startCommand:
-  type: stdio
+  type: http
+  endpoint: /mcp
   configSchema:
     type: object
-    required:
-      - PLUGGEDIN_API_KEY
     properties:
       PLUGGEDIN_API_KEY:
         type: string
-        description: Your Plugged.in API key (see plugged.in/api-keys). Required. # Slightly changed description
-  commandFunction:
-    # A function that produces the CLI command to start the MCP on stdio.
-    # Note: Command line arguments can also be used directly:
-    # --pluggedin-api-key <your-api-key> --pluggedin-api-base-url <base-url>
-    |-
-    (config) => ({ command: 'node', args: ['dist/index.js'], env: { PLUGGEDIN_API_KEY: config.PLUGGEDIN_API_KEY } }) # Pass key via env (matching veyrax)
+        description: Your Plugged.in API key for authenticated operations (see plugged.in/api-keys). Leave empty for tool discovery only.
+  commandFunction: |
+    (config) => ({
+      command: 'npx',
+      args: [
+        '-y',
+        '@pluggedin/pluggedin-mcp-proxy@latest',
+        '--transport', 'streamable-http',
+        '--port', process.env.PORT || '12006',
+        '--stateless'
+      ],
+      env: config.PLUGGEDIN_API_KEY ? { PLUGGEDIN_API_KEY: config.PLUGGEDIN_API_KEY } : {}
+    })

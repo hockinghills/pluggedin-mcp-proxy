@@ -4,6 +4,7 @@ import {
   StdioServerParameters,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ServerParameters } from "./types.js";
 import { createRequire } from 'module';
@@ -84,6 +85,46 @@ export const createPluggedinMCPClient = (
       transport = new SSEClientTransport(url);
     } catch (error) {
       console.error(`Invalid URL for SSE server ${serverParams.name}: ${serverParams.url}`);
+      return { client: undefined, transport: undefined };
+    }
+  } else if (serverParams.type === "STREAMABLE_HTTP" && serverParams.url) {
+    // Validate URL before use
+    try {
+      const url = new URL(serverParams.url);
+      // Only allow http and https protocols
+      if (!['http:', 'https:'].includes(url.protocol)) {
+        console.error(`Invalid protocol for Streamable HTTP server ${serverParams.name}: ${url.protocol}`);
+        return { client: undefined, transport: undefined };
+      }
+      
+      // Create transport options
+      const transportOptions: any = {
+        requestInit: {}
+      };
+      
+      // Add headers if provided
+      if (serverParams.headers) {
+        transportOptions.requestInit.headers = serverParams.headers;
+      }
+      
+      // Add session ID if provided
+      if (serverParams.sessionId) {
+        transportOptions.sessionId = serverParams.sessionId;
+      }
+      
+      // Add OAuth token if provided
+      if (serverParams.oauthToken) {
+        // Create a simple auth provider that returns the token
+        transportOptions.authProvider = {
+          tokens: async () => ({ access_token: serverParams.oauthToken }),
+          authorize: async () => { throw new Error("Authorization not implemented"); },
+          refresh: async () => { throw new Error("Refresh not implemented"); }
+        };
+      }
+      
+      transport = new StreamableHTTPClientTransport(url, transportOptions);
+    } catch (error) {
+      console.error(`Invalid URL for Streamable HTTP server ${serverParams.name}: ${serverParams.url}`);
       return { client: undefined, transport: undefined };
     }
   } else {
