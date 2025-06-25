@@ -5,7 +5,7 @@
   <h3>The Crossroads for AI Data Exchanges</h3>
   <p>A unified interface for managing all your MCP servers with real-time notifications</p>
 
-  [![Version](https://img.shields.io/badge/version-1.1.0-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
+  [![Version](https://img.shields.io/badge/version-1.2.0-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
   [![GitHub Stars](https://img.shields.io/github/stars/VeriTeknik/pluggedin-mcp?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/stargazers)
   [![License](https://img.shields.io/github/license/VeriTeknik/pluggedin-mcp?style=for-the-badge)](LICENSE)
   [![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
@@ -30,14 +30,26 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 - **Full MCP Support**: Handles tools, resources, resource templates, and prompts
 - **Custom Instructions**: Supports server-specific instructions formatted as MCP prompts
 
-### 🔔 New in v1.0.0
+### 🔔 New in v1.2.0
+
+- **Enhanced Security Validations**: Comprehensive URL validation with SSRF protection, command allowlisting, and header sanitization
+- **Lazy Authentication**: Tool discovery without API keys for better Smithery compatibility
+- **Improved Session Management**: Better handling of session lifecycle in Streamable HTTP mode
+- **Production Optimizations**: Lightweight Docker builds optimized for resource-constrained environments
+
+### 📦 Features from v1.1.0
+
+- **Streamable HTTP Support**: Full support for downstream MCP servers using Streamable HTTP transport
+- **HTTP Server Mode**: Run the proxy as an HTTP server with configurable ports
+- **Flexible Authentication**: Optional Bearer token authentication for HTTP endpoints
+- **Session Management**: Choose between stateful (session-based) or stateless operation modes
+
+### 🎯 Core Features from v1.0.0
+
 - **Real-Time Notifications**: Track all MCP activities with comprehensive notification support
 - **RAG Integration**: Support for document-enhanced queries through the plugged.in App
-- **Enhanced Security**: Industry-standard input validation and sanitization
 - **Inspector Scripts**: Automated testing tools for debugging and development
 - **Health Monitoring**: Built-in ping endpoint for connection monitoring
-- **Streamable HTTP Support**: Connect to modern Streamable HTTP MCP servers
-- **HTTP Server Mode**: Run the proxy as an HTTP server for web-based access
 
 ## 🚀 Quick Start
 
@@ -313,23 +325,48 @@ sequenceDiagram
 The plugged.in MCP Proxy implements comprehensive security measures to protect your system and data:
 
 ### Input Validation & Sanitization
+
 - **Command Injection Prevention**: All commands and arguments are validated against allowlists before execution
 - **Environment Variable Security**: Secure parsing of `.env` files with proper handling of quotes and multiline values
 - **Token Validation**: Strong regex patterns for API keys and authentication tokens (32-64 hex characters)
 
 ### Network Security
-- **SSRF Protection**: URL validation blocks access to localhost and private IP ranges
+
+- **SSRF Protection**: URL validation blocks access to:
+  - Localhost and loopback addresses (127.0.0.1, ::1)
+  - Private IP ranges (10.x, 172.16-31.x, 192.168.x)
+  - Link-local addresses (169.254.x)
+  - Multicast and reserved ranges
+  - Common internal service ports (SSH, databases, etc.)
+- **Header Validation**: Protection against header injection with:
+  - Dangerous header blocking
+  - RFC 7230 compliant header name validation
+  - Control character detection
+  - Header size limits (8KB max)
 - **Rate Limiting**: 
   - Tool calls: 60 requests per minute
   - API calls: 100 requests per minute
 - **Error Sanitization**: Prevents information disclosure by sanitizing error messages
 
 ### Process Security
+
 - **Safe Command Execution**: Uses `execFile()` instead of `exec()` to prevent shell injection
+- **Command Allowlist**: Only permits execution of:
+  - `node`, `npx` - Node.js commands
+  - `python`, `python3` - Python commands
+  - `uv`, `uvx`, `uvenv` - UV Python tools
 - **Argument Sanitization**: Removes shell metacharacters and control characters from all arguments
 - **Environment Variable Validation**: Only allows alphanumeric keys with underscores
 
+### Streamable HTTP Security
+
+- **Lazy Authentication**: Tool discovery doesn't require authentication, improving compatibility
+- **Session Security**: Cryptographically secure session ID generation
+- **CORS Protection**: Configurable CORS headers for web access
+- **Request Size Limits**: Prevents DoS through large payloads
+
 ### Security Utilities
+
 A dedicated `security-utils.ts` module provides:
 - Bearer token validation
 - URL validation with SSRF protection
@@ -364,9 +401,31 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📝 Recent Updates
 
-### Version 1.1.0 (January 2025)
+### Version 1.2.0 (January 2025)
+
+#### 🔒 Security Enhancements
+
+- **URL Validation**: Comprehensive SSRF protection blocking private IPs, localhost, and dangerous ports
+- **Command Allowlisting**: Only approved commands (node, npx, python, etc.) can be executed
+- **Header Sanitization**: Protection against header injection attacks
+- **Lazy Authentication**: Improved Smithery compatibility with auth-free tool discovery
+
+#### 🚀 Performance Improvements
+
+- **Optimized Docker Builds**: Multi-stage builds for minimal container footprint
+- **Production Dependencies Only**: Test files and dev dependencies excluded from Docker images
+- **Resource Efficiency**: Designed for deployment in resource-constrained environments
+
+#### 🔧 Technical Improvements
+
+- Enhanced error handling in Streamable HTTP transport
+- Better session cleanup and memory management
+- Improved TypeScript types and code organization
+
+### Version 1.1.0 (December 2024)
 
 #### 🚀 New Features
+
 - **Streamable HTTP Support**: Connect to downstream MCP servers using the modern Streamable HTTP transport
 - **HTTP Server Mode**: Run the proxy as an HTTP server for web-based access
 - **Flexible Session Management**: Choose between stateless or stateful modes
@@ -374,7 +433,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - **Health Monitoring**: `/health` endpoint for service monitoring
 
 #### 🔧 Technical Improvements
-- Updated MCP SDK to v1.13.0 for latest protocol support
+
+- Updated MCP SDK to v1.13.1 for latest protocol support
 - Added Express.js integration for HTTP server functionality
 - Enhanced TypeScript types for better developer experience
 

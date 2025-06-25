@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-01-25
+
+### Added
+- **Enhanced Security Validations**
+  - Comprehensive URL validation with SSRF protection blocking private IPs and dangerous ports
+  - Command allowlisting for STDIO servers (node, npx, python, python3, uv, uvx, uvenv)
+  - Header validation and sanitization for Streamable HTTP connections
+  - Protection against header injection attacks with RFC 7230 compliance
+- **Lazy Authentication Support**
+  - Tool discovery without API keys for better Smithery compatibility
+  - Authentication only required for actual tool/resource invocations
+  - Improved compatibility with MCP clients that expect unauthenticated discovery
+- **Production Optimizations**
+  - Multi-stage Docker builds for minimal container footprint
+  - Excluded test files and dev dependencies from production images
+  - Optimized for resource-constrained environments
+
+### Changed
+- Improved session management and cleanup in Streamable HTTP mode
+- Better error handling for transport lifecycle events
+- Enhanced TypeScript types for security validators
+- Updated documentation with comprehensive security best practices
+- Refined Smithery configuration for HTTP transport mode
+
+### Fixed
+- Memory management issues in long-running sessions
+- Proper cleanup of transports on error conditions
+- Session handling edge cases in stateless mode
+- Smithery YAML configuration for proper HTTP transport
+
+### Security
+- Added comprehensive input validation for all user-provided data
+- Implemented SSRF protection for URL-based connections
+- Added header injection prevention with size limits
+- Command injection protection through strict allowlisting
+
 ## [1.1.0] - 2025-01-21
 
 ### Added
