@@ -26,7 +26,6 @@ jest.config.js
 pnpm-lock.yaml # Keep if running pnpm install in Dockerfile
 package-lock.json # If npm is used
 yarn.lock # If yarn is used
-smithery.yaml
 .clinerules
 
 # Docker files themselves
