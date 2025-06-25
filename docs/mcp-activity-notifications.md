@@ -50,7 +50,7 @@ The MCP Inspector now requires authentication for security. We provide multiple 
 
 ### Auto-Opening Mode (Recommended)
 ```bash
-pnpm inspector
+npm run inspector
 ```
 This automatically:
 - Starts the inspector with authentication disabled (`DANGEROUSLY_OMIT_AUTH=true`)
@@ -59,13 +59,13 @@ This automatically:
 
 ### Manual Mode
 ```bash
-pnpm inspector:manual
+npm run inspector:manual
 ```
 Starts the inspector with authentication disabled but doesn't auto-open the browser.
 
 ### Authenticated Mode
 ```bash
-pnpm inspector:auth
+npm run inspector:auth
 ```
 This requires using the session token displayed in the console output for production-like testing.
 

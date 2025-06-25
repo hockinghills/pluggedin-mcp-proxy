@@ -5,7 +5,7 @@ This directory contains helper scripts for running the MCP Inspector with variou
 ## Scripts
 
 ### `inspector-simple.js` (Default)
-- **Used by**: `pnpm inspector`
+- **Used by**: `npm run inspector`
 - **Purpose**: Auto-opens browser after starting inspector
 - **Features**:
   - Starts inspector with `DANGEROUSLY_OMIT_AUTH=true`
@@ -30,13 +30,13 @@ This directory contains helper scripts for running the MCP Inspector with variou
 
 ```bash
 # Auto-opening mode (recommended)
-pnpm inspector
+npm run inspector
 
 # Manual mode (no auto-open)
-pnpm inspector:manual
+npm run inspector:manual
 
 # Authenticated mode (requires token)
-pnpm inspector:auth
+npm run inspector:auth
 ```
 
 ## Environment Variables
