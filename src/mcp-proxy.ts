@@ -50,6 +50,7 @@ const instructionToServerMap: Record<string, string> = {};
 // Define the static discovery tool schema using Zod
 const DiscoverToolsInputSchema = z.object({
   server_uuid: z.string().uuid().optional().describe("Optional UUID of a specific server to discover. If omitted, attempts to discover all."),
+  force_refresh: z.boolean().optional().default(false).describe("Set to true to bypass cache and force a fresh discovery. Defaults to false."),
 }).describe("Triggers tool discovery for configured MCP servers in the Pluggedin App.");
 
 // Define the static discovery tool structure
@@ -233,6 +234,7 @@ export const createServer = async () => {
         if (requestedToolName === discoverToolsStaticTool.name) {
             debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = DiscoverToolsInputSchema.parse(args ?? {}); // Validate args
+            const { server_uuid, force_refresh } = validatedArgs;
 
             const apiKey = getPluggedinMCPApiKey();
             const baseUrl = getPluggedinMCPApiBaseUrl();
@@ -240,55 +242,381 @@ export const createServer = async () => {
                 throw new Error("Pluggedin API Key or Base URL is not configured for discovery trigger.");
             }
 
-            // Define the API endpoint in pluggedin-app to trigger discovery
-            // (This endpoint needs to be created in pluggedin-app)
-            const discoveryApiUrl = validatedArgs.server_uuid
-                ? `${baseUrl}/api/discover/${validatedArgs.server_uuid}` // Endpoint for specific server
-                : `${baseUrl}/api/discover/all`; // Endpoint for all servers
-            
             const timer = createExecutionTimer();
+            let shouldRunDiscovery = force_refresh; // If force_refresh is true, always run discovery
+            let existingDataSummary = "";
 
-            try {
-                // Make POST request to trigger discovery
-                const discoveryResponse = await axios.post(discoveryApiUrl, {}, { // Empty body for trigger
-                    headers: { Authorization: `Bearer ${apiKey}` },
-                    timeout: 30000, // Allow longer timeout for discovery trigger
-                });
+            // Check for existing data if not forcing refresh
+            if (!force_refresh) {
+                try {
+                    // Check for existing tools, resources, prompts, and templates
+                    const [toolsResponse, resourcesResponse, promptsResponse, templatesResponse] = await Promise.all([
+                        axios.get(`${baseUrl}/api/tools`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
+                        axios.get(`${baseUrl}/api/resources`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
+                        axios.get(`${baseUrl}/api/prompts`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
+                        axios.get(`${baseUrl}/api/resource-templates`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 })
+                    ]);
 
-                // Return success message from the discovery API response
-                const responseMessage = discoveryResponse.data?.message || "Discovery process initiated.";
-                
-                // Log successful discovery
-                logMcpActivity({
-                    action: 'tool_call',
-                    serverName: 'Discovery System',
-                    serverUuid: 'pluggedin_discovery',
-                    itemName: requestedToolName,
-                    success: true,
-                    executionTime: timer.stop(),
-                }).catch(() => {}); // Ignore notification errors
-                
-                return {
-                    content: [{ type: "text", text: responseMessage }],
-                    isError: false,
-                } as ToolExecutionResult; // Cast to expected type
+                    const toolsCount = toolsResponse.data?.tools?.length || (Array.isArray(toolsResponse.data) ? toolsResponse.data.length : 0);
+                    const resourcesCount = Array.isArray(resourcesResponse.data) ? resourcesResponse.data.length : 0;
+                    const promptsCount = Array.isArray(promptsResponse.data) ? promptsResponse.data.length : 0;
+                    const templatesCount = Array.isArray(templatesResponse.data) ? templatesResponse.data.length : 0;
 
-            } catch (apiError: any) {
-                // Log failed discovery
-                logMcpActivity({
-                    action: 'tool_call',
-                    serverName: 'Discovery System',
-                    serverUuid: 'pluggedin_discovery',
-                    itemName: requestedToolName,
-                    success: false,
-                    errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
-                    executionTime: timer.stop(),
-                }).catch(() => {}); // Ignore notification errors
-                
-                 const errorMsg = axios.isAxiosError(apiError)
-                    ? `API Error (${apiError.response?.status}): ${apiError.response?.data?.error || apiError.message}`
-                    : apiError.message;
-                 throw new Error(`Failed to trigger discovery via API: ${errorMsg}`);
+                    const totalItems = toolsCount + resourcesCount + promptsCount + templatesCount;
+
+                    if (totalItems > 0) {
+                        // We have existing data, return it without running discovery
+                        const staticToolsCount = 3; // Always have 3 static tools
+                        const totalToolsCount = toolsCount + staticToolsCount;
+                        existingDataSummary = `Found cached data: ${toolsCount} dynamic tools + ${staticToolsCount} static tools = ${totalToolsCount} total tools, ${resourcesCount} resources, ${promptsCount} prompts, ${templatesCount} templates`;
+                        
+                        const cacheMessage = server_uuid 
+                            ? `Returning cached discovery data for server ${server_uuid}. ${existingDataSummary}. Use force_refresh=true to update.\n\n`
+                            : `Returning cached discovery data for all servers. ${existingDataSummary}. Use force_refresh=true to update.\n\n`;
+
+                        // Format the actual data for the response
+                        let dataContent = cacheMessage;
+                        
+                        // Add static built-in tools section (always available)
+                        dataContent += `## 🔧 Static Built-in Tools (Always Available):\n`;
+                        dataContent += `1. **pluggedin_discover_tools** - Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App\n`;
+                        dataContent += `2. **pluggedin_rag_query** - Performs a RAG query against documents in the Pluggedin App\n`;
+                        dataContent += `3. **pluggedin_send_notification** - Send custom notifications through the Plugged.in system with optional email delivery\n`;
+                        dataContent += `\n`;
+                        
+                        // Add dynamic tools section (from MCP servers)
+                        if (toolsCount > 0) {
+                            const tools = toolsResponse.data?.tools || toolsResponse.data || [];
+                            dataContent += `## ⚡ Dynamic MCP Tools (${toolsCount}) - From Connected Servers:\n`;
+                            tools.forEach((tool: any, index: number) => {
+                                dataContent += `${index + 1}. **${tool.name}**`;
+                                if (tool.description) {
+                                    dataContent += ` - ${tool.description}`;
+                                }
+                                dataContent += `\n`;
+                            });
+                            dataContent += `\n`;
+                        } else {
+                            dataContent += `## ⚡ Dynamic MCP Tools (0) - From Connected Servers:\n`;
+                            dataContent += `No dynamic tools available. Add MCP servers to get more tools.\n\n`;
+                        }
+                        
+                        // Add prompts section  
+                        if (promptsCount > 0) {
+                            dataContent += `## 💬 Available Prompts (${promptsCount}):\n`;
+                            promptsResponse.data.forEach((prompt: any, index: number) => {
+                                dataContent += `${index + 1}. **${prompt.name}**`;
+                                if (prompt.description) {
+                                    dataContent += ` - ${prompt.description}`;
+                                }
+                                dataContent += `\n`;
+                            });
+                            dataContent += `\n`;
+                        }
+                        
+                        // Add resources section
+                        if (resourcesCount > 0) {
+                            dataContent += `## 📄 Available Resources (${resourcesCount}):\n`;
+                            resourcesResponse.data.forEach((resource: any, index: number) => {
+                                dataContent += `${index + 1}. **${resource.name || resource.uri}**`;
+                                if (resource.description) {
+                                    dataContent += ` - ${resource.description}`;
+                                }
+                                if (resource.uri && resource.name !== resource.uri) {
+                                    dataContent += ` (${resource.uri})`;
+                                }
+                                dataContent += `\n`;
+                            });
+                            dataContent += `\n`;
+                        }
+                        
+                        // Add templates section
+                        if (templatesCount > 0) {
+                            dataContent += `## 📋 Available Resource Templates (${templatesCount}):\n`;
+                            templatesResponse.data.forEach((template: any, index: number) => {
+                                dataContent += `${index + 1}. **${template.name || template.uriTemplate}**`;
+                                if (template.description) {
+                                    dataContent += ` - ${template.description}`;
+                                }
+                                if (template.uriTemplate && template.name !== template.uriTemplate) {
+                                    dataContent += ` (${template.uriTemplate})`;
+                                }
+                                dataContent += `\n`;
+                            });
+                        }
+
+                        // Log successful cache hit
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System (Cache)',
+                            serverUuid: 'pluggedin_discovery_cache',
+                            itemName: requestedToolName,
+                            success: true,
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+
+                        return {
+                            content: [{ type: "text", text: dataContent }],
+                            isError: false,
+                        } as ToolExecutionResult;
+                    } else {
+                        // No existing data found, run discovery
+                        shouldRunDiscovery = true;
+                        existingDataSummary = "No cached dynamic data found";
+                    }
+                } catch (cacheError: any) {
+                    // Error checking cache, show static tools and proceed with discovery
+                    debugError(`[Discovery Cache Check] Error checking for existing data: ${cacheError.message}`);
+                    
+                    // Show static tools even when cache check fails
+                    const staticToolsCount = 3;
+                    const cacheErrorMessage = `Cache check failed, showing static tools. Will run discovery for dynamic tools.\n\n`;
+                    
+                    let staticContent = cacheErrorMessage;
+                    staticContent += `## 🔧 Static Built-in Tools (Always Available):\n`;
+                    staticContent += `1. **pluggedin_discover_tools** - Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App\n`;
+                    staticContent += `2. **pluggedin_rag_query** - Performs a RAG query against documents in the Pluggedin App\n`;
+                    staticContent += `3. **pluggedin_send_notification** - Send custom notifications through the Plugged.in system with optional email delivery\n`;
+                    staticContent += `\n## ⚡ Dynamic MCP Tools - From Connected Servers:\n`;
+                    staticContent += `Cache check failed. Running discovery to find dynamic tools...\n\n`;
+                    staticContent += `Note: You can call pluggedin_discover_tools again to see the updated results.`;
+
+                    // Log cache error but static tools shown
+                    logMcpActivity({
+                        action: 'tool_call',
+                        serverName: 'Discovery System (Cache Error)',
+                        serverUuid: 'pluggedin_discovery_cache_error',
+                        itemName: requestedToolName,
+                        success: true,
+                        executionTime: timer.stop(),
+                    }).catch(() => {}); // Ignore notification errors
+
+                    // Also trigger discovery in background (fire and forget)
+                    try {
+                        const discoveryApiUrl = server_uuid
+                            ? `${baseUrl}/api/discover/${server_uuid}`
+                            : `${baseUrl}/api/discover/all`;
+                        
+                        axios.post(discoveryApiUrl, {}, {
+                            headers: { Authorization: `Bearer ${apiKey}` },
+                            timeout: 60000, // Background discovery timeout
+                        }).catch(() => {}); // Fire and forget
+                    } catch {
+                        // Ignore discovery trigger errors
+                    }
+
+                    return {
+                        content: [{ type: "text", text: staticContent }],
+                        isError: false,
+                    } as ToolExecutionResult;
+                }
+            }
+
+            // Run discovery if needed
+            if (shouldRunDiscovery) {
+                // Define the API endpoint in pluggedin-app to trigger discovery
+                const discoveryApiUrl = server_uuid
+                    ? `${baseUrl}/api/discover/${server_uuid}` // Endpoint for specific server
+                    : `${baseUrl}/api/discover/all`; // Endpoint for all servers
+
+                if (force_refresh) {
+                    // For force refresh, get cached data first AND trigger discovery in background
+                    try {
+                        // Fire-and-forget: trigger discovery in background
+                        axios.post(discoveryApiUrl, {}, {
+                            headers: { Authorization: `Bearer ${apiKey}` },
+                            timeout: 60000, // 60s timeout for background discovery
+                        }).catch((bgError) => {
+                            debugError(`[Background Discovery] Failed: ${bgError.message}`);
+                        });
+
+                        // Get current cached data to show immediately
+                        let forceRefreshContent = "";
+                        
+                        try {
+                            // Fetch current cached data (use shorter timeout since this is just cache check)
+                            const [toolsResponse, resourcesResponse, promptsResponse, templatesResponse] = await Promise.all([
+                                axios.get(`${baseUrl}/api/tools`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 5000 }),
+                                axios.get(`${baseUrl}/api/resources`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 5000 }),
+                                axios.get(`${baseUrl}/api/prompts`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 5000 }),
+                                axios.get(`${baseUrl}/api/resource-templates`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 5000 })
+                            ]);
+
+                            const toolsCount = toolsResponse.data?.tools?.length || (Array.isArray(toolsResponse.data) ? toolsResponse.data.length : 0);
+                            const resourcesCount = Array.isArray(resourcesResponse.data) ? resourcesResponse.data.length : 0;
+                            const promptsCount = Array.isArray(promptsResponse.data) ? promptsResponse.data.length : 0;
+                            const templatesCount = Array.isArray(templatesResponse.data) ? templatesResponse.data.length : 0;
+
+                            const staticToolsCount = 3;
+                            const totalToolsCount = toolsCount + staticToolsCount;
+                            
+                            const refreshMessage = server_uuid 
+                                ? `🔄 Force refresh initiated for server ${server_uuid}. Discovery is running in background.\n\nShowing current cached data (${toolsCount} dynamic tools + ${staticToolsCount} static tools = ${totalToolsCount} total tools, ${resourcesCount} resources, ${promptsCount} prompts, ${templatesCount} templates):\n\n`
+                                : `🔄 Force refresh initiated for all servers. Discovery is running in background.\n\nShowing current cached data (${toolsCount} dynamic tools + ${staticToolsCount} static tools = ${totalToolsCount} total tools, ${resourcesCount} resources, ${promptsCount} prompts, ${templatesCount} templates):\n\n`;
+
+                            forceRefreshContent = refreshMessage;
+                            
+                            // Add static built-in tools section (always available)
+                            forceRefreshContent += `## 🔧 Static Built-in Tools (Always Available):\n`;
+                            forceRefreshContent += `1. **pluggedin_discover_tools** - Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App\n`;
+                            forceRefreshContent += `2. **pluggedin_rag_query** - Performs a RAG query against documents in the Pluggedin App\n`;
+                            forceRefreshContent += `3. **pluggedin_send_notification** - Send custom notifications through the Plugged.in system with optional email delivery\n`;
+                            forceRefreshContent += `\n`;
+                            
+                            // Add dynamic tools section (from MCP servers)
+                            if (toolsCount > 0) {
+                                const tools = toolsResponse.data?.tools || toolsResponse.data || [];
+                                forceRefreshContent += `## ⚡ Dynamic MCP Tools (${toolsCount}) - From Connected Servers:\n`;
+                                tools.forEach((tool: any, index: number) => {
+                                    forceRefreshContent += `${index + 1}. **${tool.name}**`;
+                                    if (tool.description) {
+                                        forceRefreshContent += ` - ${tool.description}`;
+                                    }
+                                    forceRefreshContent += `\n`;
+                                });
+                                forceRefreshContent += `\n`;
+                            } else {
+                                forceRefreshContent += `## ⚡ Dynamic MCP Tools (0) - From Connected Servers:\n`;
+                                forceRefreshContent += `No dynamic tools available. Add MCP servers to get more tools.\n\n`;
+                            }
+                            
+                            // Add prompts section  
+                            if (promptsCount > 0) {
+                                forceRefreshContent += `## 💬 Available Prompts (${promptsCount}):\n`;
+                                promptsResponse.data.forEach((prompt: any, index: number) => {
+                                    forceRefreshContent += `${index + 1}. **${prompt.name}**`;
+                                    if (prompt.description) {
+                                        forceRefreshContent += ` - ${prompt.description}`;
+                                    }
+                                    forceRefreshContent += `\n`;
+                                });
+                                forceRefreshContent += `\n`;
+                            }
+                            
+                            // Add resources section
+                            if (resourcesCount > 0) {
+                                forceRefreshContent += `## 📄 Available Resources (${resourcesCount}):\n`;
+                                resourcesResponse.data.forEach((resource: any, index: number) => {
+                                    forceRefreshContent += `${index + 1}. **${resource.name || resource.uri}**`;
+                                    if (resource.description) {
+                                        forceRefreshContent += ` - ${resource.description}`;
+                                    }
+                                    if (resource.uri && resource.name !== resource.uri) {
+                                        forceRefreshContent += ` (${resource.uri})`;
+                                    }
+                                    forceRefreshContent += `\n`;
+                                });
+                                forceRefreshContent += `\n`;
+                            }
+                            
+                            // Add templates section
+                            if (templatesCount > 0) {
+                                forceRefreshContent += `## 📋 Available Resource Templates (${templatesCount}):\n`;
+                                templatesResponse.data.forEach((template: any, index: number) => {
+                                    forceRefreshContent += `${index + 1}. **${template.name || template.uriTemplate}**`;
+                                    if (template.description) {
+                                        forceRefreshContent += ` - ${template.description}`;
+                                    }
+                                    if (template.uriTemplate && template.name !== template.uriTemplate) {
+                                        forceRefreshContent += ` (${template.uriTemplate})`;
+                                    }
+                                    forceRefreshContent += `\n`;
+                                });
+                                forceRefreshContent += `\n`;
+                            }
+                            
+                            forceRefreshContent += `📝 **Note**: Fresh discovery is running in background. Call pluggedin_discover_tools() again in 10-30 seconds to see if any new tools were discovered.`;
+
+                        } catch (cacheError: any) {
+                            // If we can't get cached data, just show static tools
+                            forceRefreshContent = server_uuid 
+                                ? `🔄 Force refresh initiated for server ${server_uuid}. Discovery is running in background.\n\nCould not retrieve cached data, showing static tools:\n\n`
+                                : `🔄 Force refresh initiated for all servers. Discovery is running in background.\n\nCould not retrieve cached data, showing static tools:\n\n`;
+                                
+                            forceRefreshContent += `## 🔧 Static Built-in Tools (Always Available):\n`;
+                            forceRefreshContent += `1. **pluggedin_discover_tools** - Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App\n`;
+                            forceRefreshContent += `2. **pluggedin_rag_query** - Performs a RAG query against documents in the Pluggedin App\n`;
+                            forceRefreshContent += `3. **pluggedin_send_notification** - Send custom notifications through the Plugged.in system with optional email delivery\n`;
+                            forceRefreshContent += `\n📝 **Note**: Fresh discovery is running in background. Call pluggedin_discover_tools() again in 10-30 seconds to see updated results.`;
+                        }
+
+                        // Log successful trigger
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System (Background)',
+                            serverUuid: 'pluggedin_discovery_bg',
+                            itemName: requestedToolName,
+                            success: true,
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+                        
+                        return {
+                            content: [{ type: "text", text: forceRefreshContent }],
+                            isError: false,
+                        } as ToolExecutionResult;
+
+                    } catch (triggerError: any) {
+                        // Even trigger failed, return error
+                        const errorMsg = `Failed to trigger background discovery: ${triggerError.message}`;
+                        
+                        // Log failed trigger
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System',
+                            serverUuid: 'pluggedin_discovery',
+                            itemName: requestedToolName,
+                            success: false,
+                            errorMessage: errorMsg,
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+                        
+                        throw new Error(errorMsg);
+                    }
+                } else {
+                    // For regular discovery (no force refresh), wait for completion
+                    try {
+                        const discoveryResponse = await axios.post(discoveryApiUrl, {}, {
+                            headers: { Authorization: `Bearer ${apiKey}` },
+                            timeout: 30000, // 30s timeout for regular discovery
+                        });
+
+                        // Return success message from the discovery API response
+                        const baseMessage = discoveryResponse.data?.message || "Discovery process initiated.";
+                        const contextMessage = `${existingDataSummary}. ${baseMessage}\n\nNote: You can call pluggedin_discover_tools again to see the cached results including both static and dynamic tools.`;
+                        
+                        // Log successful discovery
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System',
+                            serverUuid: 'pluggedin_discovery',
+                            itemName: requestedToolName,
+                            success: true,
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+                        
+                        return {
+                            content: [{ type: "text", text: contextMessage }],
+                            isError: false,
+                        } as ToolExecutionResult;
+
+                    } catch (apiError: any) {
+                        // Log failed discovery
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System',
+                            serverUuid: 'pluggedin_discovery',
+                            itemName: requestedToolName,
+                            success: false,
+                            errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+                        
+                         const errorMsg = axios.isAxiosError(apiError)
+                            ? `API Error (${apiError.response?.status}): ${apiError.response?.data?.error || apiError.message}`
+                            : apiError.message;
+                         throw new Error(`Failed to trigger discovery via API: ${errorMsg}`);
+                    }
+                }
             }
         }
 
@@ -538,7 +866,8 @@ The Plugged.in MCP Proxy is a powerful gateway that provides access to multiple 
 - **Purpose**: Trigger discovery of tools and resources from configured MCP servers
 - **Parameters**: 
   - \`server_uuid\` (optional): Discover from specific server, or all servers if omitted
-- **Usage**: Refreshes the available tools list when new servers are added
+  - \`force_refresh\` (optional): Set to true to trigger background discovery and return immediately (defaults to false)
+- **Usage**: Returns cached data instantly if available. Use \`force_refresh=true\` to update data in background, then call again without force_refresh to see results.
 
 ### 2. **pluggedin_rag_query**
 - **Purpose**: Perform RAG (Retrieval-Augmented Generation) queries against your documents

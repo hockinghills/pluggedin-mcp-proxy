@@ -34,6 +34,10 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 
 ### 🔔 New in v1.2.6
 
+- **Smart Discovery Caching**: Instant tool discovery with intelligent caching - no more timeouts!
+  - Returns cached data immediately if available (< 1 second response time)
+  - `force_refresh=true` triggers background discovery while showing current tools
+  - Clear separation between static built-in tools and dynamic MCP tools
 - **Default API URL**: No configuration needed - defaults to https://plugged.in automatically
 - **Smithery Optimization**: Fixed STDIO transport issues for seamless Smithery deployment
 - **Silent Operation**: No console output interference with STDIO protocol
@@ -53,6 +57,51 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 - **RAG Integration**: Support for document-enhanced queries through the plugged.in App
 - **Inspector Scripts**: Automated testing tools for debugging and development
 - **Health Monitoring**: Built-in ping endpoint for connection monitoring
+
+## 🔧 Tool Categories
+
+The proxy provides two distinct categories of tools:
+
+### 🔧 Static Built-in Tools (Always Available)
+These tools are built into the proxy and work without any server configuration:
+- **`pluggedin_discover_tools`** - Smart discovery with caching for instant results
+- **`pluggedin_rag_query`** - RAG search across your documents
+- **`pluggedin_send_notification`** - Send notifications with optional email delivery
+
+### ⚡ Dynamic MCP Tools (From Connected Servers)
+These tools come from your configured MCP servers and can be turned on/off:
+- Database tools (PostgreSQL, SQLite, etc.)
+- File system tools
+- API integration tools
+- Custom tools from any MCP server
+
+The discovery tool intelligently shows both categories, giving AI models immediate access to all available capabilities.
+
+### 🚀 Discovery Tool Usage
+
+```bash
+# Quick discovery - returns cached data instantly
+pluggedin_discover_tools()
+
+# Force refresh - shows current tools + runs background discovery  
+pluggedin_discover_tools({"force_refresh": true})
+
+# Discover specific server
+pluggedin_discover_tools({"server_uuid": "uuid-here"})
+```
+
+**Example Response:**
+```
+## 🔧 Static Built-in Tools (Always Available):
+1. **pluggedin_discover_tools** - Smart discovery with caching
+2. **pluggedin_rag_query** - RAG search across documents  
+3. **pluggedin_send_notification** - Send notifications
+
+## ⚡ Dynamic MCP Tools (8) - From Connected Servers:
+1. **query** - Run read-only SQL queries
+2. **generate_random_integer** - Generate secure random integers
+...
+```
 
 ## 🚀 Quick Start
 
@@ -298,30 +347,40 @@ sequenceDiagram
     end
     PluggedinMCP ->> MCPClient: Return response
 
-    alt Discovery tool
+    alt Discovery tool (Smart Caching)
         MCPClient ->> PluggedinMCP: Call pluggedin_discover_tools
-        PluggedinMCP ->> PluggedinApp: Trigger discovery action
-        PluggedinApp ->> MCPServers: Connect and discover capabilities
-        MCPServers ->> PluggedinApp: Return capabilities
-        PluggedinApp ->> PluggedinMCP: Confirm discovery complete
-        PluggedinMCP ->> MCPClient: Return discovery result
+        alt Cached data available
+            PluggedinMCP ->> PluggedinApp: Check cached capabilities
+            PluggedinApp ->> PluggedinMCP: Return cached tools/resources/prompts
+            PluggedinMCP ->> MCPClient: Return instant results (static + dynamic)
+        else Force refresh or no cache
+            PluggedinMCP ->> PluggedinApp: Trigger background discovery
+            PluggedinMCP ->> MCPClient: Return current tools + "discovery running"
+            PluggedinApp ->> MCPServers: Connect and discover capabilities (background)
+            MCPServers ->> PluggedinApp: Return fresh capabilities
+        end
     end
 ```
 
 ## 🔄 Workflow
 
 1. **Configuration**: The proxy fetches server configurations from the plugged.in App
-2. **Capability Listing**: The proxy fetches discovered capabilities from plugged.in App APIs
-   - `tools/list`: Fetches from `/api/tools` (returns prefixed names)
+2. **Smart Discovery** (`pluggedin_discover_tools`):
+   - **Cache Check**: First checks for existing cached data (< 1 second)
+   - **Instant Response**: Returns static tools + cached dynamic tools immediately
+   - **Background Refresh**: For `force_refresh=true`, runs discovery in background while showing current tools
+   - **Fresh Discovery**: Only runs full discovery if no cached data exists
+3. **Capability Listing**: The proxy fetches discovered capabilities from plugged.in App APIs
+   - `tools/list`: Fetches from `/api/tools` (includes static + dynamic tools)
    - `resources/list`: Fetches from `/api/resources`
    - `resource-templates/list`: Fetches from `/api/resource-templates`
    - `prompts/list`: Fetches from `/api/prompts` and `/api/custom-instructions`, merges results
-3. **Capability Resolution**: The proxy resolves capabilities to target servers
+4. **Capability Resolution**: The proxy resolves capabilities to target servers
    - `tools/call`: Parses prefix from tool name, looks up server in internal map
    - `resources/read`: Calls `/api/resolve/resource?uri=...` to get server details
    - `prompts/get`: Checks for custom instruction prefix or calls `/api/resolve/prompt?name=...`
-4. **Request Routing**: Requests are routed to the appropriate underlying MCP server
-5. **Response Handling**: Responses from the underlying servers are returned to the client
+5. **Request Routing**: Requests are routed to the appropriate underlying MCP server
+6. **Response Handling**: Responses from the underlying servers are returned to the client
 
 ## 🔒 Security Features
 

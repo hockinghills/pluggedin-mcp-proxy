@@ -38,6 +38,9 @@ program
     "--require-api-auth",
     "Require API key authentication for Streamable HTTP requests"
   )
+  // Allow unknown options and excess arguments to prevent errors when called by MCP inspector
+  .allowUnknownOption()
+  .allowExcessArguments()
   // Removed --report option
   .parse(process.argv);
 
