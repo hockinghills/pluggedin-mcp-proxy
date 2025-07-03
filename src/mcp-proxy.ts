@@ -33,7 +33,13 @@ import { readFileSync } from 'fs';
 import { createRequire } from 'module';
 import { ToolExecutionResult, ServerParameters } from "./types.js"; // Import ServerParameters
 import { logMcpActivity, createExecutionTimer } from "./notification-logger.js";
-import { RateLimiter, sanitizeErrorMessage } from "./security-utils.js";
+import { 
+  RateLimiter, 
+  sanitizeErrorMessage, 
+  validateToolName, 
+  validateRequestSize,
+  withTimeout
+} from "./security-utils.js";
 import { debugLog, debugError } from "./debug-log.js";
 // Removed incorrect McpMessage import
 
@@ -42,10 +48,8 @@ const packageJson = require('../package.json');
 
 // Map to store prefixed tool name -> { originalName, serverUuid }
 const toolToServerMap: Record<string, { originalName: string; serverUuid: string; }> = {};
-// Map to store prefixed instruction name -> serverUuid
+// Map to store custom instruction name -> serverUuid
 const instructionToServerMap: Record<string, string> = {};
-
-// Removed logger
 
 // Define the static discovery tool schema using Zod
 const DiscoverToolsInputSchema = z.object({
@@ -224,6 +228,16 @@ export const createServer = async () => {
     const { name: requestedToolName, arguments: args } = request.params;
     const meta = request.params._meta;
 
+    // Basic input validation
+    if (!requestedToolName || typeof requestedToolName !== 'string') {
+      throw new Error("Invalid tool name provided");
+    }
+
+    // Basic request size check (lightweight)
+    if (!validateRequestSize(request.params, 50 * 1024 * 1024)) { // 50MB limit
+      throw new Error("Request payload too large");
+    }
+
     // Rate limit check for tool calls
     if (!toolCallRateLimiter.checkLimit()) {
       throw new Error("Rate limit exceeded. Please try again later.");
@@ -249,13 +263,15 @@ export const createServer = async () => {
             // Check for existing data if not forcing refresh
             if (!force_refresh) {
                 try {
-                    // Check for existing tools, resources, prompts, and templates
-                    const [toolsResponse, resourcesResponse, promptsResponse, templatesResponse] = await Promise.all([
+                    // Check for existing tools, resources, prompts, and templates with timeout protection
+                    const apiRequests = Promise.all([
                         axios.get(`${baseUrl}/api/tools`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
                         axios.get(`${baseUrl}/api/resources`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
                         axios.get(`${baseUrl}/api/prompts`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
                         axios.get(`${baseUrl}/api/resource-templates`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 })
                     ]);
+                    
+                    const [toolsResponse, resourcesResponse, promptsResponse, templatesResponse] = await withTimeout(apiRequests, 15000);
 
                     const toolsCount = toolsResponse.data?.tools?.length || (Array.isArray(toolsResponse.data) ? toolsResponse.data.length : 0);
                     const resourcesCount = Array.isArray(resourcesResponse.data) ? resourcesResponse.data.length : 0;
@@ -755,17 +771,22 @@ export const createServer = async () => {
             }
         }
 
-        // Look up the downstream tool in our map using original name
+        // Look up the downstream tool in our map
         const toolInfo = toolToServerMap[requestedToolName];
         if (!toolInfo) {
-            throw new Error(`Method not found: ${requestedToolName}`);
+            throw new Error(`Tool not found: ${requestedToolName}`);
         }
 
         const { originalName, serverUuid } = toolInfo;
 
+        // Basic server UUID validation
+        if (!serverUuid || typeof serverUuid !== 'string') {
+            throw new Error("Invalid server UUID");
+        }
+
         // Get the downstream server session
-        // Need to fetch server params again - potentially cache this?
         const serverParams = await getMcpServers(true);
+        
         const params = serverParams[serverUuid];
         if (!params) {
             throw new Error(`Configuration not found for server UUID: ${serverUuid} associated with tool ${requestedToolName}`);
@@ -816,15 +837,16 @@ export const createServer = async () => {
         }
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const sanitizedError = sanitizeErrorMessage(error);
       // Use requestedToolName here, which is in scope
-      debugError(`[CallTool Handler Error] Tool: ${requestedToolName}, Error: ${errorMessage}`);
+      debugError(`[CallTool Handler Error] Tool: ${requestedToolName || 'unknown'}, Error: ${sanitizedError}`);
 
       // Re-throw the error for the SDK to format and send back to the client
       if (error instanceof Error) {
-         throw error;
+         // Create a new error with sanitized message to prevent info disclosure
+         throw new Error(sanitizedError);
       } else {
-         throw new Error(errorMessage || "An unknown error occurred during tool execution");
+         throw new Error(sanitizedError || "An unknown error occurred during tool execution");
       }
     }
   });
@@ -1392,12 +1414,40 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
   // Ping Handler - Responds to simple ping requests
   server.setRequestHandler(PingRequestSchema, async (request) => {
     debugError("[Ping Handler] Received ping request.");
-    // Ping response should be an empty object for success
+    
+    // Basic health information
+    const healthInfo = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      version: packageJson.version,
+      sessions: Object.keys(toolToServerMap).length,
+      memory: process.memoryUsage(),
+      uptime: process.uptime()
+    };
+    
+    debugLog("[Ping Handler] Health check:", healthInfo);
+    
+    // Return empty object for MCP spec compliance, but log health info
     return {};
   });
 
   const cleanup = async () => {
-    await cleanupAllSessions();
+    try {
+      // Clean up sessions
+      await cleanupAllSessions();
+      
+      // Clear tool mappings
+      Object.keys(toolToServerMap).forEach(key => delete toolToServerMap[key]);
+      Object.keys(instructionToServerMap).forEach(key => delete instructionToServerMap[key]);
+      
+      // Reset rate limiters
+      toolCallRateLimiter.reset();
+      apiCallRateLimiter.reset();
+      
+      debugLog("[Proxy Cleanup] All resources cleaned up successfully");
+    } catch (error) {
+      debugError("[Proxy Cleanup] Error during cleanup:", error);
+    }
   };
 
   return { server, cleanup };

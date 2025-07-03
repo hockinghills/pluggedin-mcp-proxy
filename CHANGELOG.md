@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-01-26
+
+### Added
+- **Smart Discovery Tool Caching**
+  - Instant tool discovery responses with intelligent cache-first approach
+  - Background refresh mechanism for cache updates
+  - Memory-efficient caching with automatic cleanup
+  - Force refresh capability for explicit cache invalidation
+- **Enhanced Security for Client Deployment**
+  - Lightweight security utils optimized for client-side deployment
+  - Removed port blocking for legitimate MCP server ports (3306, 5432, etc.)
+  - Simplified SSRF protection focused on cloud metadata endpoints
+  - Client-appropriate rate limiting with reduced overhead
+
+### Changed
+- **Discovery Tool Performance**
+  - Discovery tool now provides instant responses from cache
+  - Background discovery processes update cache without blocking responses
+  - Reduced memory footprint for Docker container deployments
+  - Optimized for client-side and lightweight proxy scenarios
+- **Security Model Refinement**
+  - Adapted security measures for client deployment context
+  - Removed heavyweight server-side security features
+  - Maintained essential protections while reducing complexity
+  - Increased request size limits appropriate for MCP usage (50MB)
+
+### Fixed
+- Removed blocking of legitimate database ports for local MCP servers
+- Fixed TypeScript linter errors in security utilities
+- Eliminated over-engineered server-side security features
+- Improved error handling for client deployment scenarios
+
+### Performance
+- **Instant discovery responses** through smart caching
+- **Reduced memory usage** for containerized deployments
+- **Lightweight architecture** suitable for client-side proxy usage
+- **Fast startup times** with minimal resource requirements
+
+### Breaking Changes
+- Discovery tool behavior changed to cache-first approach
+- Some security validations relaxed for client deployment compatibility
+
 ## [1.2.6] - 2025-01-26
 
 ### Added
