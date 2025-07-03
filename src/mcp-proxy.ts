@@ -1030,20 +1030,28 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
       } else {
         // --- Handle Standard Prompt Request (Existing Logic) ---
         debugError(`[GetPrompt Handler] No custom instruction prefix detected for: ${name}. Proceeding with standard prompt resolution.`);
-        // 1. Call the resolve API endpoint
+        // 1. Call the resolve API endpoint to find which server has this prompt
         const resolveApiUrl = `${baseUrl}/api/resolve/prompt?name=${encodeURIComponent(name)}`;
          debugError(`[GetPrompt Handler] Calling resolve API: ${resolveApiUrl}`); // Log API call
-        const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, {
+        const resolveResponse = await axios.get<{uuid: string}>(resolveApiUrl, {
           headers: { Authorization: `Bearer ${apiKey}` },
           timeout: 10000,
         });
 
-        const serverParams = resolveResponse.data;
-        if (!serverParams || !serverParams.uuid) {
+        const resolvedData = resolveResponse.data;
+        if (!resolvedData || !resolvedData.uuid) {
           throw new Error(`Could not resolve server details for prompt name: ${name}`);
         }
 
-        // 2. Get the downstream server session
+        // 2. Get FRESH server configuration using the same method as tools
+        const serverParamsMap = await getMcpServers(true);
+        const serverParams = serverParamsMap[resolvedData.uuid];
+        
+        if (!serverParams) {
+          throw new Error(`Configuration not found for server UUID: ${resolvedData.uuid} associated with prompt ${name}`);
+        }
+
+        // 3. Get the downstream server session using fresh config
         const sessionKey = getSessionKey(serverParams.uuid, serverParams);
         const session = await getSession(sessionKey, serverParams.uuid, serverParams);
 

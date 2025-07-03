@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2025-01-26
+
+### Fixed
+- **Critical Session Management Bug for Prompts**
+  - Fixed "Session could not be established" error when using prompts from MCP Inspector
+  - Prompt handler now uses fresh server configuration from `getMcpServers()` like tools do
+  - Resolved issue where prompt resolution used stale/incomplete server parameters from resolve API
+  - Ensures consistent session key generation between tools and prompts
+  - Tools and prompts now use identical session establishment flow
+
+### Changed
+- Simplified prompt resolution to only fetch server UUID from resolve API
+- Unified session establishment logic across all MCP capabilities (tools, prompts, resources)
+
 ## [1.3.1] - 2025-01-03
 
 ### Changed
