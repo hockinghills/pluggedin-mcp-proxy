@@ -113,13 +113,36 @@ export const createPluggedinMCPClient = (
         transportOptions.sessionId = serverParams.sessionId;
       }
       
-      // Add OAuth token if provided
+      // Add OAuth configuration if provided
       if (serverParams.oauthToken) {
         // Create a simple auth provider that returns the token
         transportOptions.authProvider = {
           tokens: async () => ({ access_token: serverParams.oauthToken }),
           authorize: async () => { throw new Error("Authorization not implemented"); },
           refresh: async () => { throw new Error("Refresh not implemented"); }
+        };
+      } else if (serverParams.oauth) {
+        // Create a more comprehensive auth provider for OAuth flows
+        transportOptions.authProvider = {
+          tokens: async () => {
+            // If we have a stored token, return it
+            if (serverParams.oauthToken) {
+              return { access_token: serverParams.oauthToken };
+            }
+            // Otherwise, trigger authorization flow
+            throw new Error("Authorization required");
+          },
+          authorize: async () => {
+            // This would trigger the OAuth authorization flow
+            // The actual implementation depends on the OAuth provider
+            debugError(`OAuth authorization required for ${serverParams.name}`);
+            throw new Error("OAuth authorization required - please authorize through the UI");
+          },
+          refresh: async (refreshToken: string) => {
+            // Implement token refresh if supported by the provider
+            debugError(`OAuth token refresh not implemented for ${serverParams.name}`);
+            throw new Error("Token refresh not implemented");
+          }
         };
       }
       

@@ -21,6 +21,12 @@ export interface ServerParameters {
   oauthToken?: string; // OAuth token for authentication
   headers?: Record<string, string>; // Custom headers for requests
   sessionId?: string; // Session ID for stateful connections
+  oauth?: {
+    clientId?: string;
+    authorizationUrl?: string;
+    tokenUrl?: string;
+    scopes?: string[];
+  }; // OAuth configuration for authorization code flow
   // Add other relevant fields fetched from the API if needed
 }
 

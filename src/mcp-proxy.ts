@@ -80,7 +80,7 @@ const ragQueryStaticTool: Tool = {
 };
 
 // Define the static tool for sending custom notifications
-const sendNotificationStaticTool = {
+const sendNotificationStaticTool: Tool = {
   name: "pluggedin_send_notification",
   description: "Send custom notifications through the Plugged.in system with optional email delivery. You can provide a custom title or let the system use a localized default.",
   inputSchema: {
@@ -108,7 +108,7 @@ const sendNotificationStaticTool = {
     },
     required: ["message"]
   }
-} as const;
+};
 
 // Input schema for validation
 const SendNotificationInputSchema = z.object({
@@ -116,6 +116,76 @@ const SendNotificationInputSchema = z.object({
   message: z.string().min(1, "Message cannot be empty"),
   severity: z.enum(["INFO", "SUCCESS", "WARNING", "ALERT"]).default("INFO"),
   sendEmail: z.boolean().optional().default(false),
+});
+
+// Define the static tool for listing notifications
+const listNotificationsStaticTool: Tool = {
+  name: "pluggedin_list_notifications",
+  description: "List notifications from the Plugged.in system with optional filters for unread only and result limit",
+  inputSchema: {
+    type: "object",
+    properties: {
+      onlyUnread: {
+        type: "boolean",
+        description: "Filter to show only unread notifications",
+        default: false
+      },
+      limit: {
+        type: "integer",
+        description: "Limit the number of notifications returned (1-100)",
+        minimum: 1,
+        maximum: 100
+      }
+    }
+  }
+};
+
+// Input schema for list notifications validation
+const ListNotificationsInputSchema = z.object({
+  onlyUnread: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+// Define the static tool for marking notification as read
+const markNotificationReadStaticTool: Tool = {
+  name: "pluggedin_mark_notification_read",
+  description: "Mark a notification as read in the Plugged.in system",
+  inputSchema: {
+    type: "object",
+    properties: {
+      notificationId: {
+        type: "string",
+        description: "The ID of the notification to mark as read"
+      }
+    },
+    required: ["notificationId"]
+  }
+};
+
+// Input schema for mark notification read validation
+const MarkNotificationReadInputSchema = z.object({
+  notificationId: z.string().min(1, "Notification ID cannot be empty"),
+});
+
+// Define the static tool for deleting notification
+const deleteNotificationStaticTool: Tool = {
+  name: "pluggedin_delete_notification",
+  description: "Delete a notification from the Plugged.in system",
+  inputSchema: {
+    type: "object",
+    properties: {
+      notificationId: {
+        type: "string",
+        description: "The ID of the notification to delete"
+      }
+    },
+    required: ["notificationId"]
+  }
+};
+
+// Input schema for delete notification validation
+const DeleteNotificationInputSchema = z.object({
+  notificationId: z.string().min(1, "Notification ID cannot be empty"),
 });
 
 // Removed old static tool instances (getToolsInstance, callToolInstance) as they are superseded by API fetching
@@ -156,7 +226,14 @@ export const createServer = async () => {
      if (!apiKey || !baseUrl) {
        // Don't log to console for STDIO transport as it interferes with protocol
        return { 
-         tools: [discoverToolsStaticTool, ragQueryStaticTool, sendNotificationStaticTool], 
+         tools: [
+           discoverToolsStaticTool, 
+           ragQueryStaticTool, 
+           sendNotificationStaticTool,
+           listNotificationsStaticTool,
+           markNotificationReadStaticTool,
+           deleteNotificationStaticTool
+         ], 
          nextCursor: undefined 
        };
      }
@@ -207,7 +284,15 @@ export const createServer = async () => {
        // Note: Pagination not handled here, assumes API returns all tools
 
        // Always include the static tools
-       const allToolsForClient = [discoverToolsStaticTool, ragQueryStaticTool, sendNotificationStaticTool, ...toolsForClient];
+       const allToolsForClient = [
+         discoverToolsStaticTool, 
+         ragQueryStaticTool, 
+         sendNotificationStaticTool,
+         listNotificationsStaticTool,
+         markNotificationReadStaticTool,
+         deleteNotificationStaticTool,
+         ...toolsForClient
+       ];
 
        return { tools: allToolsForClient, nextCursor: undefined };
 
@@ -771,6 +856,230 @@ export const createServer = async () => {
             }
         }
 
+        // Handle static list notifications tool
+        if (requestedToolName === listNotificationsStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = ListNotificationsInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for listing notifications.");
+            }
+
+            // Build query parameters
+            const queryParams = new URLSearchParams();
+            if (validatedArgs.onlyUnread) {
+                queryParams.append('onlyUnread', 'true');
+            }
+            if (validatedArgs.limit) {
+                queryParams.append('limit', validatedArgs.limit.toString());
+            }
+
+            const notificationApiUrl = `${baseUrl}/api/notifications${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make GET request to list notifications
+                const notificationResponse = await axios.get(notificationApiUrl, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                    },
+                    timeout: 15000,
+                });
+
+                const notifications = notificationResponse.data?.notifications || [];
+                
+                // Format the response for better readability
+                let responseText = `Found ${notifications.length} notification${notifications.length !== 1 ? 's' : ''}`;
+                if (validatedArgs.onlyUnread) {
+                    responseText += ' (unread only)';
+                }
+                responseText += ':\n\n';
+                
+                if (notifications.length === 0) {
+                    responseText += 'No notifications found.';
+                } else {
+                    notifications.forEach((notif: any, index: number) => {
+                        responseText += `${index + 1}. **${notif.title}**\n`;
+                        responseText += `   ID: ${notif.id} (use this ID for operations)\n`;
+                        responseText += `   Type: ${notif.type} | Severity: ${notif.severity || 'N/A'}\n`;
+                        responseText += `   Status: ${notif.read ? 'Read' : 'Unread'}${notif.completed ? ' | Completed' : ''}\n`;
+                        responseText += `   Created: ${new Date(notif.created_at).toLocaleString()}\n`;
+                        responseText += `   Message: ${notif.message}\n`;
+                        if (notif.link) {
+                            responseText += `   Link: ${notif.link}\n`;
+                        }
+                        responseText += '\n';
+                    });
+                    responseText += '💡 **Tip**: Use the UUID shown in the ID field when marking as read or deleting notifications.';
+                }
+                
+                // Log successful list
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Notification System',
+                    serverUuid: 'pluggedin_notifications',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult;
+
+            } catch (apiError: any) {
+                 // Log failed list
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'Notification System',
+                     serverUuid: 'pluggedin_notifications',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Sanitized error message
+                 const errorMsg = axios.isAxiosError(apiError) && apiError.response?.status
+                    ? `Notification service error (${apiError.response.status})`
+                    : "Notification service temporarily unavailable";
+                 throw new Error(errorMsg);
+            }
+        }
+
+        // Handle static mark notification as read tool
+        if (requestedToolName === markNotificationReadStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = MarkNotificationReadInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for marking notifications.");
+            }
+
+            const notificationApiUrl = `${baseUrl}/api/notifications/${validatedArgs.notificationId}/read`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make PATCH request to mark notification as read
+                const notificationResponse = await axios.patch(notificationApiUrl, {}, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                    },
+                    timeout: 15000,
+                });
+
+                const responseText = notificationResponse.data?.message || "Notification marked as read";
+                
+                // Log successful mark as read
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Notification System',
+                    serverUuid: 'pluggedin_notifications',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult;
+
+            } catch (apiError: any) {
+                 // Log failed mark as read
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'Notification System',
+                     serverUuid: 'pluggedin_notifications',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Handle specific error cases
+                 let errorMsg = "Failed to mark notification as read";
+                 if (axios.isAxiosError(apiError)) {
+                     if (apiError.response?.status === 404) {
+                         errorMsg = "Notification not found or not accessible";
+                     } else if (apiError.response?.status) {
+                         errorMsg = `Notification service error (${apiError.response.status})`;
+                     }
+                 }
+                 throw new Error(errorMsg);
+            }
+        }
+
+        // Handle static delete notification tool
+        if (requestedToolName === deleteNotificationStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = DeleteNotificationInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for deleting notifications.");
+            }
+
+            const notificationApiUrl = `${baseUrl}/api/notifications/${validatedArgs.notificationId}`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make DELETE request to delete notification
+                const notificationResponse = await axios.delete(notificationApiUrl, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                    },
+                    timeout: 15000,
+                });
+
+                const responseText = notificationResponse.data?.message || "Notification deleted successfully";
+                
+                // Log successful delete
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Notification System',
+                    serverUuid: 'pluggedin_notifications',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult;
+
+            } catch (apiError: any) {
+                 // Log failed delete
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'Notification System',
+                     serverUuid: 'pluggedin_notifications',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Handle specific error cases
+                 let errorMsg = "Failed to delete notification";
+                 if (axios.isAxiosError(apiError)) {
+                     if (apiError.response?.status === 404) {
+                         errorMsg = "Notification not found or not accessible";
+                     } else if (apiError.response?.status) {
+                         errorMsg = `Notification service error (${apiError.response.status})`;
+                     }
+                 }
+                 throw new Error(errorMsg);
+            }
+        }
+
         // Look up the downstream tool in our map
         const toolInfo = toolToServerMap[requestedToolName];
         if (!toolInfo) {
@@ -901,9 +1210,29 @@ The Plugged.in MCP Proxy is a powerful gateway that provides access to multiple 
 - **Purpose**: Send custom notifications through the Plugged.in system
 - **Parameters**:
   - \`message\` (required): The notification message content
+  - \`title\` (optional): Custom notification title
   - \`severity\` (optional): INFO, SUCCESS, WARNING, or ALERT (defaults to INFO)
   - \`sendEmail\` (optional): Whether to also send via email (defaults to false)
 - **Usage**: Create custom notifications with optional email delivery
+
+### 4. **pluggedin_list_notifications**
+- **Purpose**: List notifications from the Plugged.in system
+- **Parameters**:
+  - \`onlyUnread\` (optional): Filter to show only unread notifications (defaults to false)
+  - \`limit\` (optional): Limit the number of notifications returned (1-100)
+- **Usage**: Retrieve and check your notifications with optional filters
+
+### 5. **pluggedin_mark_notification_read**
+- **Purpose**: Mark a notification as read
+- **Parameters**:
+  - \`notificationId\` (required): The ID of the notification to mark as read
+- **Usage**: Update notification status to read
+
+### 6. **pluggedin_delete_notification**
+- **Purpose**: Delete a notification
+- **Parameters**:
+  - \`notificationId\` (required): The ID of the notification to delete
+- **Usage**: Remove notifications from your list
 
 ## 🔗 Proxy Features
 
@@ -928,7 +1257,7 @@ The Plugged.in MCP Proxy is a powerful gateway that provides access to multiple 
 2. **Discover Tools**: Run \`pluggedin_discover_tools\` to see available tools from your servers
 3. **Use Tools**: Call any discovered tool through the proxy
 4. **Query Documents**: Use \`pluggedin_rag_query\` to search your knowledge base
-5. **Send Notifications**: Use \`pluggedin_send_notification\` for custom alerts
+5. **Manage Notifications**: Use notification tools to send, list, mark as read, and delete notifications
 
 ## 📊 Monitoring
 

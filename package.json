@@ -13,19 +13,20 @@
     "inspector:auto": "node scripts/inspector-simple.js",
     "inspector:manual": "dotenv -e .env.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY} -e PLUGGEDIN_API_BASE_URL=${PLUGGEDIN_API_BASE_URL}",
     "inspector:auth": "dotenv -e .env.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY} -e PLUGGEDIN_API_BASE_URL=${PLUGGEDIN_API_BASE_URL}",
+    "inspector:staging": "dotenv -e .env.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY} -e PLUGGEDIN_API_BASE_URL=${PLUGGEDIN_API_STAGING_BASE_URL}",
     "inspector:prod": "dotenv -e .env.production.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY}",
     "report": "dotenv -e .env.local -- node dist/index.js --report"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/VeriTeknik/pluggedin-mcp-proxy.git"
+    "url": "git+https://github.com/VeriTeknik/pluggedin-mcp.git"
   },
   "author": "James Zhang",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/VeriTeknik/pluggedin-mcp-proxy/issues"
+    "url": "https://github.com/VeriTeknik/pluggedin-mcp/issues"
   },
-  "homepage": "https://github.com/VeriTeknik/pluggedin-mcp-proxy#readme",
+  "homepage": "https://github.com/VeriTeknik/pluggedin-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.13.1",
     "axios": "^1.10.0",
