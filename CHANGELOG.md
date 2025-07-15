@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2025-01-26
+
+### Added
+- **OAuth Token Management**: Seamless OAuth authentication handling for Streamable HTTP MCP servers
+  - Automatic token retrieval from plugged.in App v2.7.0
+  - Secure token storage and refresh mechanisms
+  - No client-side authentication needed anymore
+- **Enhanced Notification System**: Bidirectional notification support
+  - Send notifications to plugged.in App
+  - Receive notifications from MCP servers
+  - Mark notifications as read/unread
+  - Delete notifications programmatically
+- **Trending Analytics**: Real-time activity tracking
+  - Every tool call is logged and tracked
+  - Contributes to trending server calculations in plugged.in App
+  - Usage metrics and popularity insights
+- **Registry Integration**: Full support for Registry v2 features
+  - Automatic server discovery from registry
+  - Installation tracking and metrics
+  - Community server support
+
+### Changed
+- Updated integration with plugged.in App v2.7.0 Registry v2 features
+- Enhanced security with OAuth token management
+- Improved notification system architecture
+
+### Performance
+- Optimized OAuth token handling for better performance
+- Enhanced notification delivery mechanisms
+- Improved registry integration efficiency
+
 ## [1.3.2] - 2025-01-26
 
 ### Fixed

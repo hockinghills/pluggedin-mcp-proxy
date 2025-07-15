@@ -5,7 +5,7 @@
   <h3>The Crossroads for AI Data Exchanges</h3>
   <p>A unified interface for managing all your MCP servers with built-in playground for testing on any AI model</p>
 
-  [![Version](https://img.shields.io/badge/version-1.2.6-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
+  [![Version](https://img.shields.io/badge/version-1.4.0-blue?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/releases)
   [![GitHub Stars](https://img.shields.io/github/stars/VeriTeknik/pluggedin-mcp?style=for-the-badge)](https://github.com/VeriTeknik/pluggedin-mcp/stargazers)
   [![License](https://img.shields.io/github/license/VeriTeknik/pluggedin-mcp?style=for-the-badge)](LICENSE)
   [![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
@@ -17,6 +17,8 @@
 The plugged.in MCP Proxy Server is a powerful middleware that aggregates multiple Model Context Protocol (MCP) servers into a single unified interface. It fetches tool, prompt, and resource configurations from the [plugged.in App](https://github.com/VeriTeknik/pluggedin-app) and intelligently routes requests to the appropriate underlying MCP servers.
 
 This proxy enables seamless integration with any MCP client (Claude, Cline, Cursor, etc.) while providing advanced management capabilities through the plugged.in ecosystem.
+
+> ⭐ **If you find this project useful, please consider giving it a star on GitHub!** It helps us reach more developers and motivates us to keep improving.
 
 ## ✨ Key Features
 
@@ -32,17 +34,25 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 - **Full MCP Support**: Handles tools, resources, resource templates, and prompts
 - **Custom Instructions**: Supports server-specific instructions formatted as MCP prompts
 
-### 🔔 New in v1.2.6
+### 🎯 New in v1.4.0 (Registry v2 Support)
 
-- **Smart Discovery Caching**: Instant tool discovery with intelligent caching - no more timeouts!
-  - Returns cached data immediately if available (< 1 second response time)
-  - `force_refresh=true` triggers background discovery while showing current tools
-  - Clear separation between static built-in tools and dynamic MCP tools
-- **Default API URL**: No configuration needed - defaults to https://plugged.in automatically
-- **Smithery Optimization**: Fixed STDIO transport issues for seamless Smithery deployment
-- **Silent Operation**: No console output interference with STDIO protocol
-- **Built-in Static Tools**: Tool discovery, RAG search, and notifications available without authentication
-- **Enhanced Debugging**: Smart debug logging that only activates for non-STDIO transports
+- **OAuth Token Management**: Seamless OAuth authentication handling for Streamable HTTP MCP servers
+  - Automatic token retrieval from plugged.in App
+  - Secure token storage and refresh mechanisms
+  - No client-side authentication needed
+- **Enhanced Notification System**: Bidirectional notification support
+  - Send notifications to plugged.in App
+  - Receive notifications from MCP servers
+  - Mark notifications as read/unread
+  - Delete notifications programmatically
+- **Trending Analytics**: Real-time activity tracking
+  - Every tool call is logged and tracked
+  - Contributes to trending server calculations
+  - Usage metrics and popularity insights
+- **Registry Integration**: Full support for Registry v2 features
+  - Automatic server discovery from registry
+  - Installation tracking and metrics
+  - Community server support
 
 ### 📦 Features from v1.1.0
 
