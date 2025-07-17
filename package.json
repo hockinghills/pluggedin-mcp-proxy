@@ -15,6 +15,7 @@
     "inspector:auth": "dotenv -e .env.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY} -e PLUGGEDIN_API_BASE_URL=${PLUGGEDIN_API_BASE_URL}",
     "inspector:staging": "dotenv -e .env.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY} -e PLUGGEDIN_API_BASE_URL=${PLUGGEDIN_API_STAGING_BASE_URL}",
     "inspector:prod": "dotenv -e .env.production.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY}",
+    "inspector:no-api": "node scripts/inspector-no-api.js",
     "report": "dotenv -e .env.local -- node dist/index.js --report"
   },
   "repository": {

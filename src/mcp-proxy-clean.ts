@@ -7,32 +7,18 @@ import {
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
   Tool,
-  ListToolsResultSchema,
-  ListPromptsResultSchema,
-  ListResourcesResultSchema,
-  ReadResourceResultSchema,
   ListResourceTemplatesRequestSchema,
-  ListResourceTemplatesResultSchema,
   ResourceTemplate,
-  CompatibilityCallToolResultSchema,
-  GetPromptResultSchema,
-  PromptMessage,
   PingRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
-import axios from "axios";
-import { getMcpServers } from "./fetch-pluggedinmcp.js";
-import { getSessionKey, sanitizeName, isDebugEnabled, getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "./utils.js";
-import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
-import { ConnectedClient } from "./client.js";
-import { ToolExecutionResult, ServerParameters } from "./types.js";
-import { logMcpActivity, createExecutionTimer } from "./notification-logger.js";
+import { sanitizeName, isDebugEnabled } from "./utils.js";
+import { cleanupAllSessions, initSessions } from "./sessions.js";
+import { ToolExecutionResult } from "./types.js";
 import { 
   RateLimiter, 
   sanitizeErrorMessage, 
   validateToolName, 
   validateRequestSize,
-  withTimeout
 } from "./security-utils.js";
 import { debugLog, debugError } from "./debug-log.js";
 import { createRequire } from 'module';
@@ -59,7 +45,7 @@ const dynamicToolHandlers = new DynamicToolHandlers(toolToServerMap, instruction
 const rateLimiter = new RateLimiter(60000, 60);
 
 export class McpProxy {
-  public server: Server;
+  private server: Server;
 
   constructor() {
     this.server = new Server(
@@ -110,84 +96,36 @@ export class McpProxy {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       debugError("[ListTools Handler] Listing available tools...");
       
-      const apiKey = getPluggedinMCPApiKey();
-      const baseUrl = getPluggedinMCPApiBaseUrl();
-      
-      // If no API key, return only static tools
-      if (!apiKey || !baseUrl) {
-        debugError("[ListTools Handler] No API key, returning static tools only");
-        return { tools: staticTools };
-      }
-      
       try {
-        // Try to fetch tools from API endpoint if available
-        const apiUrl = `${baseUrl}/api/tools`;
+        const connectedTools: Tool[] = [];
         
-        try {
-          const response = await axios.get<{ tools: (Tool & { _serverUuid: string, _serverName?: string })[] }>(
-            apiUrl,
-            {
-              headers: { Authorization: `Bearer ${apiKey}` },
-              timeout: 10000,
-            }
-          );
-          
-          const fetchedTools = response.data?.tools || [];
-          
-          // Clear and populate toolToServerMap for routing
-          Object.keys(toolToServerMap).forEach(key => delete toolToServerMap[key]);
-          
-          fetchedTools.forEach(tool => {
-            if (tool.name && tool._serverUuid) {
-              toolToServerMap[tool.name] = { 
-                originalName: tool.name,
-                serverUuid: tool._serverUuid 
-              };
-            }
-          });
-          
-          // Remove internal fields before returning
-          const toolsForClient: Tool[] = fetchedTools.map(({ _serverUuid, _serverName, ...rest }) => rest);
-          
-          // Combine static and fetched tools
-          const allTools = [...staticTools, ...toolsForClient];
-          
-          debugError(`[ListTools Handler] Returning ${allTools.length} tools (${staticTools.length} static, ${toolsForClient.length} dynamic from API)`);
-          
-          return { tools: allTools };
-          
-        } catch (apiError) {
-          // If API fails, fall back to session-based approach
-          debugError("[ListTools Handler] API fetch failed, falling back to sessions:", apiError);
-          
-          const connectedTools: Tool[] = [];
-          
-          // Get dynamic tools from connected sessions
-          const sessions = global.sessions || {};
-          for (const [sessionKey, session] of Object.entries(sessions)) {
-            const sessionData = session as any;
-            if (sessionData?.serverCapabilities?.tools) {
-              sessionData.serverCapabilities.tools.forEach((tool: any) => {
-                const serverName = sessionData.serverName || 'unknown';
-                const prefixedName = sanitizeName(`${serverName}_${tool.name}`);
-                const prefixedDescription = `[${serverName}] ${tool.description}`;
-                
-                connectedTools.push({
-                  name: prefixedName,
-                  description: prefixedDescription,
-                  inputSchema: tool.inputSchema,
-                });
+        // Get dynamic tools from connected sessions
+        const sessions = global.sessions || {};
+        for (const [sessionKey, session] of Object.entries(sessions)) {
+          const sessionData = session as any;
+          if (sessionData?.serverCapabilities?.tools) {
+            sessionData.serverCapabilities.tools.forEach((tool: any) => {
+              const serverName = sessionData.serverName || 'unknown';
+              const prefixedName = sanitizeName(`${serverName}_${tool.name}`);
+              const prefixedDescription = `[${serverName}] ${tool.description}`;
+              
+              connectedTools.push({
+                name: prefixedName,
+                description: prefixedDescription,
+                inputSchema: tool.inputSchema,
               });
-            }
+            });
           }
-
-          // Combine static and dynamic tools
-          const allTools = [...staticTools, ...connectedTools];
-          
-          debugError(`[ListTools Handler] Returning ${allTools.length} tools (${staticTools.length} static, ${connectedTools.length} dynamic from sessions)`);
-          
-          return { tools: allTools };
         }
+
+        // Combine static and dynamic tools
+        const allTools = [...staticTools, ...connectedTools];
+        
+        debugError(`[ListTools Handler] Returning ${allTools.length} tools (${staticTools.length} static, ${connectedTools.length} dynamic)`);
+        
+        return {
+          tools: allTools,
+        };
       } catch (error) {
         debugError("[ListTools Handler] Error listing tools:", error);
         return { tools: staticTools };
@@ -224,7 +162,7 @@ export class McpProxy {
           return {
             content: staticResult.content,
             isError: staticResult.isError,
-          } as any;
+          };
         }
 
         // Try dynamic tools
@@ -233,7 +171,7 @@ export class McpProxy {
           return {
             content: dynamicResult.content,
             isError: dynamicResult.isError,
-          } as any;
+          };
         }
 
         // Try custom instructions
@@ -242,7 +180,7 @@ export class McpProxy {
           return {
             content: instructionResult.content,
             isError: instructionResult.isError,
-          } as any;
+          };
         }
 
         // Tool not found
@@ -260,7 +198,7 @@ export class McpProxy {
             },
           ],
           isError: true,
-        } as any;
+        };
       }
     });
 
@@ -303,7 +241,7 @@ export class McpProxy {
         
         return {
           prompts: allPrompts,
-        } as any;
+        };
       } catch (error) {
         debugError("[ListPrompts Handler] Error listing prompts:", error);
         return { 
@@ -353,7 +291,7 @@ export class McpProxy {
                   }
                 });
                 
-                return response as any;
+                return response;
               } catch (error) {
                 debugError(`[GetPrompt Handler] Error getting prompt from server:`, error);
                 throw error;
@@ -403,7 +341,7 @@ export class McpProxy {
         
         return {
           resources: allResources,
-        } as any;
+        };
       } catch (error) {
         debugError("[ListResources Handler] Error listing resources:", error);
         return { resources: [] };
@@ -448,7 +386,7 @@ export class McpProxy {
           params: { uri: originalUri }
         });
 
-        return response as any;
+        return response;
       } catch (error) {
         debugError(`[ReadResource Handler] Error:`, error);
         throw error;
@@ -489,7 +427,7 @@ export class McpProxy {
         
         return {
           resourceTemplates: allTemplates,
-        } as any;
+        };
       } catch (error) {
         debugError("[ListResourceTemplates Handler] Error listing resource templates:", error);
         return { resourceTemplates: [] };
@@ -502,11 +440,9 @@ export class McpProxy {
     
     const transport = this.server.transport;
     
+    debugLog("[MCP Proxy] Server started successfully, running on stdio");
     if (transport) {
-      debugLog("[MCP Proxy] Server started successfully, running on stdio");
       await transport.start();
-    } else {
-      throw new Error("No transport available");
     }
   }
 }
@@ -528,19 +464,6 @@ if (!global.sessions) {
     debugError("[MCP Proxy] Failed to initialize sessions:", error);
   }
 })();
-
-// Export createServer function for backward compatibility
-export const createServer = async () => {
-  const proxy = new McpProxy();
-  const transport = proxy.server.transport;
-  
-  return {
-    server: proxy.server,
-    cleanup: async () => {
-      await cleanupAllSessions();
-    }
-  };
-};
 
 // Only run if this is the main module
 if (import.meta.url === `file://${process.argv[1]}`) {
