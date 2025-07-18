@@ -103,12 +103,17 @@ export class CallPluggedinToolTool {
               }
             );
             
-            if (response.data && Array.isArray(response.data.results)) {
-              // Find the tool with the matching name
-              const matchingTool = response.data.results.find((tool: any) => tool.name === toolName);
-              if (matchingTool) {
-                serverUuid = matchingTool.mcp_server_uuid;
-              }
+            let tools: any[] = [];
+            if (response.data && response.data.tools && Array.isArray(response.data.tools)) {
+              tools = response.data.tools;
+            } else if (response.data && Array.isArray(response.data)) {
+              tools = response.data;
+            }
+            
+            // Find the tool with the matching name
+            const matchingTool = tools.find((tool: any) => tool.name === toolName);
+            if (matchingTool) {
+              serverUuid = matchingTool.mcp_server_uuid || matchingTool._serverUuid;
             }
           } catch (error) {
             // Ignore API errors and fall back to the old method

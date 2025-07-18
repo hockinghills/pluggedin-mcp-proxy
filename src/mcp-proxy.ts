@@ -32,7 +32,7 @@ import { createRequire } from 'module';
 
 // Import refactored modules
 import { staticTools } from './tools/static-tools.js';
-import { StaticToolHandlers } from './handlers/static-handlers.js';
+import { StaticToolHandlers } from './handlers/static-handlers-refactored.js';
 import { DynamicToolHandlers } from './handlers/dynamic-handlers.js';
 import { staticPrompts, getStaticPrompt } from './utils/prompts.js';
 

@@ -6,6 +6,7 @@ import {
   connectPluggedinMCPClient,
 } from "./client.js";
 import { getSessionKey } from "./utils.js";
+import { sessionManager } from "./session-manager.js";
 // import { container } from './di-container.js'; // Removed DI container
 // import { Logger } from './logging.js'; // Removed Logger type
 
@@ -44,6 +45,15 @@ export const getSession = async (
     }
 
     _sessions[sessionKey] = newClient;
+    
+    // Sync with SessionManager
+    sessionManager.setSession(sessionKey, newClient);
+    
+    // Also maintain global.sessions for backward compatibility
+    if (!global.sessions) {
+      global.sessions = {};
+    }
+    global.sessions[sessionKey] = newClient;
 
     return newClient;
   }
@@ -70,6 +80,14 @@ export const cleanupAllSessions = async (): Promise<void> => {
     Object.entries(_sessions).map(async ([sessionKey, session]) => {
       await session.cleanup();
       delete _sessions[sessionKey];
+      
+      // Clean up from SessionManager
+      sessionManager.deleteSession(sessionKey);
+      
+      // Clean up from global.sessions
+      if (global.sessions && global.sessions[sessionKey]) {
+        delete global.sessions[sessionKey];
+      }
     })
   );
 };

@@ -1,6 +1,7 @@
 import { ToolExecutionResult } from "../types.js";
 import { getSession } from "../sessions.js";
 import { getSessionKey } from "../utils.js";
+import { sessionManager } from "../session-manager.js";
 
 // Declare global sessions type
 declare global {
@@ -36,18 +37,8 @@ export class DynamicToolHandlers {
     const { originalName, serverUuid } = toolMapping;
     debugLog(`[CallTool Handler] Mapped tool ${toolName} to server ${serverUuid} with original name ${originalName}`);
 
-    const sessions = global.sessions || {};
-    let session: any = null;
-    
-    // Find session by server UUID
-    // TODO: Consider refactoring to use direct serverUuid mapping instead of prefix matching
-    // This would require updating session creation logic to use serverUuid as the key
-    for (const [key, sess] of Object.entries(sessions)) {
-      if (key.startsWith(serverUuid + '_')) {
-        session = sess;
-        break;
-      }
-    }
+    // Use SessionManager for centralized session management
+    const session = sessionManager.getSessionByServerUuid(serverUuid);
     
     if (!session || !session.client) {
       throw new Error(`No active session found for server ${serverUuid}. Please ensure the server is connected.`);
@@ -137,18 +128,8 @@ export class DynamicToolHandlers {
       return null; // Not a custom instruction
     }
 
-    const sessions = global.sessions || {};
-    let session: any = null;
-    
-    // Find session by server UUID
-    // TODO: Consider refactoring to use direct serverUuid mapping instead of prefix matching
-    // This would require updating session creation logic to use serverUuid as the key
-    for (const [key, sess] of Object.entries(sessions)) {
-      if (key.startsWith(serverUuid + '_')) {
-        session = sess;
-        break;
-      }
-    }
+    // Use SessionManager for centralized session management
+    const session = sessionManager.getSessionByServerUuid(serverUuid);
     
     if (!session || !session.serverCapabilities) {
       throw new Error(`No active session found for server ${serverUuid}. Please ensure the server is connected.`);

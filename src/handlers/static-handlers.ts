@@ -265,20 +265,20 @@ Set environment variables in your terminal before launching the editor.
         }
       });
 
-      if (isDebugEnabled()) {
-        dataContent += '\n## Static Tools\n';
-        dataContent += '1. **pluggedin_discover_tools** - Triggers discovery of tools for configured MCP servers\n';
-        dataContent += '2. **pluggedin_rag_query** - Performs a RAG query against documents\n';
-        dataContent += '3. **pluggedin_send_notification** - Send custom notifications\n';
-        dataContent += '4. **pluggedin_list_notifications** - List notifications with filters\n';
-        dataContent += '5. **pluggedin_mark_notification_read** - Mark a notification as read\n';
-        dataContent += '6. **pluggedin_delete_notification** - Delete a notification\n';
-        dataContent += '7. **pluggedin_create_document** - Create and save AI-generated documents to the user\'s library\n';
-        dataContent += '8. **pluggedin_list_documents** - List documents with filtering options\n';
-        dataContent += '9. **pluggedin_search_documents** - Search documents semantically\n';
-        dataContent += '10. **pluggedin_get_document** - Retrieve a specific document by ID\n';
-        dataContent += '11. **pluggedin_update_document** - Update or append to an existing document\n';
-      }
+      // Always show static tools for better discoverability
+      dataContent += '\n## Static Tools\n';
+      dataContent += '1. **pluggedin_setup** - Get started with Plugged.in MCP (no API key required)\n';
+      dataContent += '2. **pluggedin_discover_tools** - Triggers discovery of tools for configured MCP servers\n';
+      dataContent += '3. **pluggedin_rag_query** - Performs a RAG query against documents\n';
+      dataContent += '4. **pluggedin_send_notification** - Send custom notifications\n';
+      dataContent += '5. **pluggedin_list_notifications** - List notifications with filters\n';
+      dataContent += '6. **pluggedin_mark_notification_read** - Mark a notification as read\n';
+      dataContent += '7. **pluggedin_delete_notification** - Delete a notification\n';
+      dataContent += '8. **pluggedin_create_document** - Create and save AI-generated documents to the user\'s library\n';
+      dataContent += '9. **pluggedin_list_documents** - List documents with filtering options\n';
+      dataContent += '10. **pluggedin_search_documents** - Search documents semantically\n';
+      dataContent += '11. **pluggedin_get_document** - Retrieve a specific document by ID\n';
+      dataContent += '12. **pluggedin_update_document** - Update or append to an existing document\n';
 
       // Update activity log with success
       logMcpActivity({
@@ -482,7 +482,8 @@ Set environment variables in your terminal before launching the editor.
     // Build query parameters
     const queryParams = new URLSearchParams();
     queryParams.append('limit', validatedArgs.limit.toString());
-    queryParams.append('unreadOnly', validatedArgs.unreadOnly.toString());
+    // Use numeric value for boolean to ensure backend compatibility
+    queryParams.append('unreadOnly', validatedArgs.unreadOnly ? '1' : '0');
     if (validatedArgs.severity) {
       queryParams.append('severity', validatedArgs.severity);
     }
@@ -903,7 +904,11 @@ Set environment variables in your terminal before launching the editor.
       results.forEach((result: any, index: number) => {
         responseText += `${index + 1}. **${result.title}**\n`;
         responseText += `   ID: ${result.id}\n`;
-        responseText += `   Relevance: ${(result.relevanceScore * 100).toFixed(1)}%\n`;
+        // Validate relevance score to prevent NaN display
+        const relevanceScore = typeof result.relevanceScore === 'number' && !isNaN(result.relevanceScore) 
+          ? result.relevanceScore 
+          : 0;
+        responseText += `   Relevance: ${(relevanceScore * 100).toFixed(1)}%\n`;
         responseText += `   Snippet: ${result.snippet}\n`;
         responseText += `   Source: ${result.source}`;
         if (result.source === 'ai_generated' && result.aiMetadata?.model) {
