@@ -15,24 +15,17 @@ import {
   ListResourceTemplatesResultSchema,
   ResourceTemplate,
   CompatibilityCallToolResultSchema,
-  GetPromptResultSchema,
-  PromptMessage,
   PingRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
 import axios from "axios";
-import { getMcpServers } from "./fetch-pluggedinmcp.js";
 import { getSessionKey, sanitizeName, isDebugEnabled, getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "./utils.js";
-import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
-import { ConnectedClient } from "./client.js";
-import { ToolExecutionResult, ServerParameters } from "./types.js";
-import { logMcpActivity, createExecutionTimer } from "./notification-logger.js";
+import { cleanupAllSessions, initSessions } from "./sessions.js";
+import { ToolExecutionResult } from "./types.js";
 import { 
   RateLimiter, 
   sanitizeErrorMessage, 
   validateToolName, 
-  validateRequestSize,
-  withTimeout
+  validateRequestSize
 } from "./security-utils.js";
 import { debugLog, debugError } from "./debug-log.js";
 import { createRequire } from 'module';
@@ -58,6 +51,10 @@ const dynamicToolHandlers = new DynamicToolHandlers(toolToServerMap, instruction
 // Initialize rate limiter (60 requests per minute)
 const rateLimiter = new RateLimiter(60000, 60);
 
+/**
+ * Main MCP Proxy class that handles routing between MCP clients and multiple MCP servers.
+ * Provides a unified interface for static tools and dynamically discovered server tools.
+ */
 export class McpProxy {
   public server: Server;
 
@@ -80,10 +77,12 @@ export class McpProxy {
     this.setupErrorHandling();
   }
 
+  /**
+   * Sets up error handling and graceful shutdown for the server
+   */
   private setupErrorHandling(): void {
     this.server.onerror = (error) => {
       debugError("[MCP Proxy] Server error:", error);
-      console.error("[MCP Proxy] Server error:", error);
     };
 
     process.on('SIGINT', async () => {
@@ -99,6 +98,9 @@ export class McpProxy {
     });
   }
 
+  /**
+   * Sets up all request handlers for MCP protocol operations
+   */
   private setupHandlers(): void {
     // Handle ping requests
     this.server.setRequestHandler(PingRequestSchema, async () => {
@@ -497,6 +499,10 @@ export class McpProxy {
     });
   }
 
+  /**
+   * Starts the MCP proxy server
+   * @throws {Error} If no transport is available
+   */
   async run(): Promise<void> {
     debugLog("[MCP Proxy] Starting server...");
     

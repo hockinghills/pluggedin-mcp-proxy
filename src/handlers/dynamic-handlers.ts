@@ -13,6 +13,10 @@ import { sanitizeErrorMessage } from "../security-utils.js";
 // Type for tool to server mapping
 export type ToolToServerMap = Record<string, { originalName: string; serverUuid: string; }>;
 
+/**
+ * Handles execution of dynamic tools from connected MCP servers.
+ * Routes tool calls to the appropriate server based on the tool-to-server mapping.
+ */
 export class DynamicToolHandlers {
   constructor(
     private toolToServerMap: ToolToServerMap,

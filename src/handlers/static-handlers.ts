@@ -43,6 +43,10 @@ import {
 // Type for tool to server mapping
 export type ToolToServerMap = Record<string, { originalName: string; serverUuid: string; }>;
 
+/**
+ * Handles execution of static tools that are built into the Plugged.in MCP proxy.
+ * These tools provide core functionality like discovery, RAG queries, notifications, and document management.
+ */
 export class StaticToolHandlers {
   constructor(
     private toolToServerMap: ToolToServerMap,

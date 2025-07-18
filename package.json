@@ -32,9 +32,7 @@
     "@modelcontextprotocol/sdk": "^1.13.1",
     "axios": "^1.10.0",
     "commander": "^14.0.0",
-    "express": "^5.1.0",
-    "zod": "^3.25.67",
-    "zod-to-json-schema": "^3.24.5"
+    "express": "^5.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
