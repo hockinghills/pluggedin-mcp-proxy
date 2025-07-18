@@ -24,7 +24,7 @@ export const setupStaticTool: Tool = {
       topic: {
         type: "string",
         enum: ["getting_started", "api_key", "configuration", "troubleshooting"],
-        description: "Specific setup topic to learn about",
+        description: "Specific setup topic to learn about. Options: getting_started (default), api_key, configuration, troubleshooting",
         default: "getting_started"
       }
     }
@@ -34,7 +34,7 @@ export const setupStaticTool: Tool = {
 // Define the static discovery tool structure
 export const discoverToolsStaticTool: Tool = {
   name: "pluggedin_discover_tools",
-  description: "Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App.",
+  description: "Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App (partial functionality without API key).",
   inputSchema: zodToJsonSchema(DiscoverToolsInputSchema) as any,
 };
 

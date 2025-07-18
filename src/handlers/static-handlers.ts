@@ -175,7 +175,34 @@ export PLUGGEDIN_DEBUG=true
 ## Getting Help
 - Documentation: https://plugged.in/docs
 - Support: support@plugged.in
-- GitHub: https://github.com/pluggedin/mcp-proxy`;
+- GitHub: https://github.com/pluggedin/mcp-proxy
+
+## Platform-Specific Notes
+
+### Claude Desktop
+Add to your Claude Desktop config:
+\`\`\`json
+{
+  "mcpServers": {
+    "pluggedin": {
+      "command": "npx",
+      "args": ["@pluggedin/mcp-proxy"],
+      "env": {
+        "PLUGGEDIN_API_KEY": "pg_in_your_key_here"
+      }
+    }
+  }
+}
+\`\`\`
+
+### VS Code / Cursor
+Set environment variables in your terminal before launching the editor.
+
+### Common Error Codes
+- 401: Invalid API key
+- 403: Permission denied (check account status)
+- 429: Rate limit exceeded
+- 500: Server error (try again later)`;
         break;
     }
     

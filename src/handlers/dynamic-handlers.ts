@@ -40,6 +40,8 @@ export class DynamicToolHandlers {
     let session: any = null;
     
     // Find session by server UUID
+    // TODO: Consider refactoring to use direct serverUuid mapping instead of prefix matching
+    // This would require updating session creation logic to use serverUuid as the key
     for (const [key, sess] of Object.entries(sessions)) {
       if (key.startsWith(serverUuid + '_')) {
         session = sess;
@@ -71,15 +73,41 @@ export class DynamicToolHandlers {
 
       debugLog(`[CallTool Handler] Tool ${originalName} response:`, response);
 
-      if (response.content && Array.isArray(response.content)) {
+      if (
+        response &&
+        typeof response === "object" &&
+        Array.isArray(response.content)
+      ) {
+        // Standard response structure
         return {
           content: response.content,
-          isError: response.isError || false,
+          isError: !!response.isError,
+        };
+      } else if (
+        response &&
+        typeof response === "object" &&
+        typeof response.content === "string"
+      ) {
+        // If content is a string, wrap it in the expected array structure
+        return {
+          content: [{ type: "text", text: response.content }],
+          isError: !!response.isError,
         };
       } else {
+        // Unexpected structure: log warning and return standardized error
+        debugError(
+          `[CallTool Handler] Unexpected response structure from tool ${originalName}:`,
+          response
+        );
         return {
-          content: [{ type: "text", text: JSON.stringify(response) }],
-          isError: false,
+          content: [
+            {
+              type: "text",
+              text:
+                "Tool response format was not recognized. Please contact support or try again.",
+            },
+          ],
+          isError: true,
         };
       }
     } catch (toolError: any) {
@@ -113,6 +141,8 @@ export class DynamicToolHandlers {
     let session: any = null;
     
     // Find session by server UUID
+    // TODO: Consider refactoring to use direct serverUuid mapping instead of prefix matching
+    // This would require updating session creation logic to use serverUuid as the key
     for (const [key, sess] of Object.entries(sessions)) {
       if (key.startsWith(serverUuid + '_')) {
         session = sess;
@@ -128,9 +158,14 @@ export class DynamicToolHandlers {
     try {
       // Find the actual instruction content
       const server = session.serverCapabilities;
-      const instruction = server?.customInstructions?.find((inst: any) => 
-        (inst.name || `instruction_${Math.random().toString(36).substring(7)}`) === instructionName
-      );
+      const instruction = server?.customInstructions?.find((inst: any) => {
+        // Instructions should have consistent names set during discovery
+        if (!inst.name) {
+          debugError(`[CustomInstruction Handler] Warning: Instruction without name found`);
+          return false;
+        }
+        return inst.name === instructionName;
+      });
 
       if (!instruction) {
         throw new Error(`Instruction ${instructionName} not found on server`);

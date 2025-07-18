@@ -16,6 +16,7 @@
     "inspector:staging": "dotenv -e .env.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY} -e PLUGGEDIN_API_BASE_URL=${PLUGGEDIN_API_STAGING_BASE_URL}",
     "inspector:prod": "dotenv -e .env.production.local npx @modelcontextprotocol/inspector dist/index.js -e PLUGGEDIN_API_KEY=${PLUGGEDIN_API_KEY}",
     "inspector:no-api": "node scripts/inspector-no-api.js",
+    "test:no-api": "PLUGGEDIN_API_KEY='' PLUGGEDIN_API_BASE_URL='' npm test -- --testNamePattern='no.*api.*key' || echo 'No specific no-API-key tests found. Consider adding tests for no-API-key scenarios.'",
     "report": "dotenv -e .env.local -- node dist/index.js --report"
   },
   "repository": {
