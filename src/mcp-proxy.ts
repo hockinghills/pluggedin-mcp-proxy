@@ -15,544 +15,1842 @@ import {
   ListResourceTemplatesResultSchema,
   ResourceTemplate,
   CompatibilityCallToolResultSchema,
-  PingRequestSchema,
+  GetPromptResultSchema,
+  PromptMessage, // Import PromptMessage
+  PingRequestSchema, // Import PingRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
-import axios from "axios";
+import { z } from "zod";
+import { getMcpServers } from "./fetch-pluggedinmcp.js";
 import { getSessionKey, sanitizeName, isDebugEnabled, getPluggedinMCPApiKey, getPluggedinMCPApiBaseUrl } from "./utils.js";
-import { cleanupAllSessions, initSessions } from "./sessions.js";
-import { ToolExecutionResult } from "./types.js";
+import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
+import { ConnectedClient } from "./client.js";
+import axios from "axios";
+// Removed unused imports
+// import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js"; // No longer needed?
+// import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js"; // No longer needed?
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { readFileSync } from 'fs';
+import { createRequire } from 'module';
+import { ToolExecutionResult, ServerParameters } from "./types.js"; // Import ServerParameters
+import { logMcpActivity, createExecutionTimer } from "./notification-logger.js";
 import { 
   RateLimiter, 
   sanitizeErrorMessage, 
   validateToolName, 
-  validateRequestSize
+  validateRequestSize,
+  withTimeout
 } from "./security-utils.js";
 import { debugLog, debugError } from "./debug-log.js";
-import { createRequire } from 'module';
-
-// Import refactored modules
-import { staticTools } from './tools/static-tools.js';
-import { StaticToolHandlers } from './handlers/static-handlers-refactored.js';
-import { DynamicToolHandlers } from './handlers/dynamic-handlers.js';
-import { staticPrompts, getStaticPrompt } from './utils/prompts.js';
+// Removed incorrect McpMessage import
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
 
 // Map to store prefixed tool name -> { originalName, serverUuid }
 const toolToServerMap: Record<string, { originalName: string; serverUuid: string; }> = {};
-// Map to store custom instruction name -> serverUuid
-const instructionToServerMap: Record<string, string> = {};
+// Map to store custom instruction name -> instruction content
+const instructionToServerMap: Record<string, any> = {};
 
-// Initialize handlers
-const staticToolHandlers = new StaticToolHandlers(toolToServerMap, instructionToServerMap);
-const dynamicToolHandlers = new DynamicToolHandlers(toolToServerMap, instructionToServerMap);
+// Define the static discovery tool schema using Zod
+const DiscoverToolsInputSchema = z.object({
+  server_uuid: z.string().uuid().optional().describe("Optional UUID of a specific server to discover. If omitted, attempts to discover all."),
+  force_refresh: z.boolean().optional().default(false).describe("Set to true to bypass cache and force a fresh discovery. Defaults to false."),
+}).describe("Triggers tool discovery for configured MCP servers in the Pluggedin App.");
 
-// Initialize rate limiter (60 requests per minute)
-const rateLimiter = new RateLimiter(60000, 60);
-
-/**
- * Main MCP Proxy class that handles routing between MCP clients and multiple MCP servers.
- * Provides a unified interface for static tools and dynamically discovered server tools.
- */
-export class McpProxy {
-  public server: Server;
-
-  constructor() {
-    this.server = new Server(
-      {
-        name: "pluggedin-mcp",
-        version: packageJson.version,
-      },
-      {
-        capabilities: {
-          tools: {},
-          resources: {},
-          prompts: {},
-        },
-      }
-    );
-
-    this.setupHandlers();
-    this.setupErrorHandling();
-  }
-
-  /**
-   * Sets up error handling and graceful shutdown for the server
-   */
-  private setupErrorHandling(): void {
-    this.server.onerror = (error) => {
-      debugError("[MCP Proxy] Server error:", error);
-    };
-
-    process.on('SIGINT', async () => {
-      debugLog('[MCP Proxy] Received SIGINT, cleaning up...');
-      await cleanupAllSessions();
-      process.exit(0);
-    });
-
-    process.on('SIGTERM', async () => {
-      debugLog('[MCP Proxy] Received SIGTERM, cleaning up...');
-      await cleanupAllSessions();
-      process.exit(0);
-    });
-  }
-
-  /**
-   * Sets up all request handlers for MCP protocol operations
-   */
-  private setupHandlers(): void {
-    // Handle ping requests
-    this.server.setRequestHandler(PingRequestSchema, async () => {
-      debugLog("[Ping Handler] Ping request received");
-      return {}; // Return empty object as per the protocol
-    });
-
-    // List available tools
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      debugError("[ListTools Handler] Listing available tools...");
-      
-      const apiKey = getPluggedinMCPApiKey();
-      const baseUrl = getPluggedinMCPApiBaseUrl();
-      
-      // If no API key, return only static tools
-      if (!apiKey || !baseUrl) {
-        debugError("[ListTools Handler] No API key, returning static tools only");
-        return { tools: staticTools };
-      }
-      
-      try {
-        // Try to fetch tools from API endpoint if available
-        const apiUrl = `${baseUrl}/api/tools`;
-        
-        try {
-          const response = await axios.get<{ tools: (Tool & { _serverUuid: string, _serverName?: string })[] }>(
-            apiUrl,
-            {
-              headers: { Authorization: `Bearer ${apiKey}` },
-              timeout: 10000,
-            }
-          );
-          
-          const fetchedTools = response.data?.tools || [];
-          
-          // Clear and populate toolToServerMap for routing
-          Object.keys(toolToServerMap).forEach(key => delete toolToServerMap[key]);
-          
-          fetchedTools.forEach(tool => {
-            if (tool.name && tool._serverUuid) {
-              toolToServerMap[tool.name] = { 
-                originalName: tool.name,
-                serverUuid: tool._serverUuid 
-              };
-            }
-          });
-          
-          // Remove internal fields before returning
-          const toolsForClient: Tool[] = fetchedTools.map(({ _serverUuid, _serverName, ...rest }) => rest);
-          
-          // Combine static and fetched tools
-          const allTools = [...staticTools, ...toolsForClient];
-          
-          debugError(`[ListTools Handler] Returning ${allTools.length} tools (${staticTools.length} static, ${toolsForClient.length} dynamic from API)`);
-          
-          return { tools: allTools };
-          
-        } catch (apiError) {
-          // If API fails, fall back to session-based approach
-          debugError("[ListTools Handler] API fetch failed, falling back to sessions:", apiError);
-          
-          const connectedTools: Tool[] = [];
-          
-          // Get dynamic tools from connected sessions
-          const sessions = global.sessions || {};
-          for (const [sessionKey, session] of Object.entries(sessions)) {
-            const sessionData = session as any;
-            if (sessionData?.serverCapabilities?.tools) {
-              sessionData.serverCapabilities.tools.forEach((tool: any) => {
-                const serverName = sessionData.serverName || 'unknown';
-                const prefixedName = sanitizeName(`${serverName}_${tool.name}`);
-                const prefixedDescription = `[${serverName}] ${tool.description}`;
-                
-                connectedTools.push({
-                  name: prefixedName,
-                  description: prefixedDescription,
-                  inputSchema: tool.inputSchema,
-                });
-              });
-            }
-          }
-
-          // Combine static and dynamic tools
-          const allTools = [...staticTools, ...connectedTools];
-          
-          debugError(`[ListTools Handler] Returning ${allTools.length} tools (${staticTools.length} static, ${connectedTools.length} dynamic from sessions)`);
-          
-          return { tools: allTools };
-        }
-      } catch (error) {
-        debugError("[ListTools Handler] Error listing tools:", error);
-        return { tools: staticTools };
-      }
-    });
-
-    // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const requestedToolName: string = request.params.name;
-      const args = request.params.arguments;
-
-      debugError(`[CallTool Handler] Tool call received: ${requestedToolName}`);
-      debugLog(`[CallTool Handler] Arguments:`, args);
-
-      // Validate tool name
-      if (!validateToolName(requestedToolName)) {
-        throw new Error(`Invalid tool name: ${requestedToolName}`);
-      }
-
-      // Validate request size
-      if (!validateRequestSize(args)) {
-        throw new Error("Request payload too large");
-      }
-
-      // Apply rate limiting
-      if (!rateLimiter.checkLimit()) {
-        throw new Error(`Rate limit exceeded for tool: ${requestedToolName}. Please try again later.`);
-      }
-
-      try {
-        // Try static tools first
-        const staticResult = await staticToolHandlers.handleStaticTool(requestedToolName, args);
-        if (staticResult) {
-          return {
-            content: staticResult.content,
-            isError: staticResult.isError,
-          } as any;
-        }
-
-        // Try dynamic tools
-        const dynamicResult = await dynamicToolHandlers.handleDynamicTool(requestedToolName, args);
-        if (dynamicResult) {
-          return {
-            content: dynamicResult.content,
-            isError: dynamicResult.isError,
-          } as any;
-        }
-
-        // Try custom instructions
-        const instructionResult = await dynamicToolHandlers.handleCustomInstruction(requestedToolName, args);
-        if (instructionResult) {
-          return {
-            content: instructionResult.content,
-            isError: instructionResult.isError,
-          } as any;
-        }
-
-        // Tool not found
-        throw new Error(`Unknown tool: ${requestedToolName}. Run 'pluggedin_discover_tools' to see available tools.`);
-
-      } catch (error: any) {
-        debugError(`[CallTool Handler] Error executing tool ${requestedToolName}:`, error);
-        
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error: ${sanitizeErrorMessage(error)}`,
-            },
-          ],
-          isError: true,
-        } as any;
-      }
-    });
-
-    // List available prompts
-    this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
-      debugError("[ListPrompts Handler] Listing available prompts...");
-      
-      try {
-        const allPrompts = [];
-        
-        // Add static prompts
-        for (const [name, prompt] of Object.entries(staticPrompts)) {
-          allPrompts.push({
-            name: prompt.name,
-            description: prompt.description,
-            arguments: prompt.arguments
-          });
-        }
-        
-        // Get dynamic prompts from connected sessions
-        const sessions = global.sessions || {};
-        for (const [sessionKey, session] of Object.entries(sessions)) {
-          const sessionData = session as any;
-          if (sessionData?.serverCapabilities?.prompts) {
-            sessionData.serverCapabilities.prompts.forEach((prompt: any) => {
-              const serverName = sessionData.serverName || 'unknown';
-              const prefixedName = sanitizeName(`${serverName}_${prompt.name}`);
-              const prefixedDescription = `[${serverName}] ${prompt.description}`;
-              
-              allPrompts.push({
-                name: prefixedName,
-                description: prefixedDescription,
-                arguments: prompt.arguments || []
-              });
-            });
-          }
-        }
-        
-        debugError(`[ListPrompts Handler] Returning ${allPrompts.length} prompts`);
-        
-        return {
-          prompts: allPrompts,
-        } as any;
-      } catch (error) {
-        debugError("[ListPrompts Handler] Error listing prompts:", error);
-        return { 
-          prompts: Object.values(staticPrompts).map(p => ({
-            name: p.name,
-            description: p.description,
-            arguments: p.arguments
-          }))
-        };
-      }
-    });
-
-    // Get specific prompt
-    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-      const promptName = request.params.name;
-      const promptArgs = request.params.arguments || {};
-      
-      debugError(`[GetPrompt Handler] Getting prompt: ${promptName}`);
-
-      try {
-        // Check static prompts first
-        const staticPrompt = getStaticPrompt(promptName);
-        if (staticPrompt) {
-          return staticPrompt;
-        }
-
-        // Check dynamic prompts from connected servers
-        const sessions = global.sessions || {};
-        for (const [sessionKey, session] of Object.entries(sessions)) {
-          const sessionData = session as any;
-          if (sessionData?.serverCapabilities?.prompts) {
-            const serverName = sessionData.serverName || 'unknown';
-            
-            // Check if this is the server that has the prompt
-            const originalPromptName = promptName.replace(new RegExp(`^${sanitizeName(serverName)}_`), '');
-            const prompt = sessionData.serverCapabilities.prompts.find((p: any) => 
-              p.name === originalPromptName || sanitizeName(`${serverName}_${p.name}`) === promptName
-            );
-            
-            if (prompt && sessionData.client) {
-              try {
-                const response = await sessionData.client.request({
-                  method: "prompts/get",
-                  params: { 
-                    name: originalPromptName,
-                    arguments: promptArgs 
-                  }
-                });
-                
-                return response as any;
-              } catch (error) {
-                debugError(`[GetPrompt Handler] Error getting prompt from server:`, error);
-                throw error;
-              }
-            }
-          }
-        }
-
-        throw new Error(`Prompt not found: ${promptName}`);
-      } catch (error) {
-        debugError(`[GetPrompt Handler] Error:`, error);
-        throw error;
-      }
-    });
-
-    // List resources
-    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      debugError("[ListResources Handler] Listing available resources...");
-      
-      try {
-        const allResources: any[] = [];
-        
-        // Get resources from connected sessions
-        const sessions = global.sessions || {};
-        for (const [sessionKey, session] of Object.entries(sessions)) {
-          const sessionData = session as any;
-          if (sessionData?.serverCapabilities?.resources) {
-            sessionData.serverCapabilities.resources.forEach((resource: any) => {
-              const serverName = sessionData.serverName || 'unknown';
-              const prefixedUri = `${serverName}://${resource.uri}`;
-              const prefixedName = resource.name ? `[${serverName}] ${resource.name}` : prefixedUri;
-              const prefixedDescription = resource.description ? 
-                `[${serverName}] ${resource.description}` : 
-                `Resource from ${serverName}`;
-              
-              allResources.push({
-                uri: prefixedUri,
-                name: prefixedName,
-                description: prefixedDescription,
-                mimeType: resource.mimeType
-              });
-            });
-          }
-        }
-        
-        debugError(`[ListResources Handler] Returning ${allResources.length} resources`);
-        
-        return {
-          resources: allResources,
-        } as any;
-      } catch (error) {
-        debugError("[ListResources Handler] Error listing resources:", error);
-        return { resources: [] };
-      }
-    });
-
-    // Read resource
-    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      const resourceUri = request.params.uri;
-      
-      debugError(`[ReadResource Handler] Reading resource: ${resourceUri}`);
-
-      try {
-        // Parse the prefixed URI to extract server name and original URI
-        const match = resourceUri.match(/^([^:]+):\/\/(.+)$/);
-        if (!match) {
-          throw new Error(`Invalid resource URI format: ${resourceUri}`);
-        }
-
-        const serverName = match[1];
-        const originalUri = match[2];
-
-        // Find the session for this server
-        const sessions = global.sessions || {};
-        let targetSession = null;
-        
-        for (const [sessionKey, session] of Object.entries(sessions)) {
-          const sessionData = session as any;
-          if (sessionData.serverName === serverName) {
-            targetSession = sessionData;
-            break;
-          }
-        }
-
-        if (!targetSession || !targetSession.client) {
-          throw new Error(`No active session found for server: ${serverName}`);
-        }
-
-        // Forward the read request to the actual server
-        const response = await targetSession.client.request({
-          method: "resources/read",
-          params: { uri: originalUri }
-        });
-
-        return response as any;
-      } catch (error) {
-        debugError(`[ReadResource Handler] Error:`, error);
-        throw error;
-      }
-    });
-
-    // List resource templates
-    this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
-      debugError("[ListResourceTemplates Handler] Listing resource templates...");
-      
-      try {
-        const allTemplates: ResourceTemplate[] = [];
-        
-        // Get resource templates from connected sessions
-        const sessions = global.sessions || {};
-        for (const [sessionKey, session] of Object.entries(sessions)) {
-          const sessionData = session as any;
-          if (sessionData?.serverCapabilities?.resourceTemplates) {
-            sessionData.serverCapabilities.resourceTemplates.forEach((template: any) => {
-              const serverName = sessionData.serverName || 'unknown';
-              const prefixedUriTemplate = `${serverName}://${template.uriTemplate}`;
-              const prefixedName = template.name ? `[${serverName}] ${template.name}` : prefixedUriTemplate;
-              const prefixedDescription = template.description ? 
-                `[${serverName}] ${template.description}` : 
-                `Resource template from ${serverName}`;
-              
-              allTemplates.push({
-                uriTemplate: prefixedUriTemplate,
-                name: prefixedName,
-                description: prefixedDescription,
-                mimeType: template.mimeType
-              });
-            });
-          }
-        }
-        
-        debugError(`[ListResourceTemplates Handler] Returning ${allTemplates.length} templates`);
-        
-        return {
-          resourceTemplates: allTemplates,
-        } as any;
-      } catch (error) {
-        debugError("[ListResourceTemplates Handler] Error listing resource templates:", error);
-        return { resourceTemplates: [] };
-      }
-    });
-  }
-
-  /**
-   * Starts the MCP proxy server
-   * @throws {Error} If no transport is available
-   */
-  async run(): Promise<void> {
-    debugLog("[MCP Proxy] Starting server...");
-    
-    const transport = this.server.transport;
-    
-    if (transport) {
-      debugLog("[MCP Proxy] Server started successfully, running on stdio");
-      await transport.start();
-    } else {
-      throw new Error("No transport available");
-    }
-  }
-}
-
-// Create global sessions object if it doesn't exist
-declare global {
-  var sessions: any;
-}
-
-if (!global.sessions) {
-  global.sessions = {};
-}
-
-// Auto-connect to servers on startup
-(async () => {
-  try {
-    await initSessions();
-  } catch (error) {
-    debugError("[MCP Proxy] Failed to initialize sessions:", error);
-  }
-})();
-
-// Export createServer function for backward compatibility
-export const createServer = async () => {
-  const proxy = new McpProxy();
-  const transport = proxy.server.transport;
-  
-  return {
-    server: proxy.server,
-    cleanup: async () => {
-      await cleanupAllSessions();
-    }
-  };
+// Define the static discovery tool structure
+const discoverToolsStaticTool: Tool = {
+    name: "pluggedin_discover_tools",
+    description: "Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App.",
+    inputSchema: zodToJsonSchema(DiscoverToolsInputSchema) as any,
 };
 
-// Only run if this is the main module
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const proxy = new McpProxy();
-  proxy.run().catch((error) => {
-    console.error("Failed to run MCP Proxy:", error);
-    process.exit(1);
+// Define the static RAG query tool schema using Zod
+const RagQueryInputSchema = z.object({
+  query: z.string()
+    .min(1, "Query cannot be empty")
+    .max(1000, "Query too long")
+    .describe("The RAG query to perform."),
+}).describe("Performs a RAG query against documents in the authenticated user's project.");
+
+// Define the static RAG query tool structure
+const ragQueryStaticTool: Tool = {
+    name: "pluggedin_rag_query",
+    description: "Performs a RAG query against documents in the Pluggedin App.",
+    inputSchema: zodToJsonSchema(RagQueryInputSchema) as any,
+};
+
+// Define the static tool for sending custom notifications
+const sendNotificationStaticTool: Tool = {
+  name: "pluggedin_send_notification",
+  description: "Send custom notifications through the Plugged.in system with optional email delivery. You can provide a custom title or let the system use a localized default.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      title: {
+        type: "string",
+        description: "Optional notification title. If not provided, a localized default will be used. Consider generating a descriptive title based on the message content."
+      },
+      message: {
+        type: "string",
+        description: "The notification message content"
+      },
+      severity: {
+        type: "string",
+        enum: ["INFO", "SUCCESS", "WARNING", "ALERT"],
+        description: "The severity level of the notification (defaults to INFO)",
+        default: "INFO"
+      },
+      sendEmail: {
+        type: "boolean",
+        description: "Whether to also send the notification via email",
+        default: false
+      }
+    },
+    required: ["message"]
+  }
+};
+
+// Input schema for validation
+const SendNotificationInputSchema = z.object({
+  title: z.string().optional(),
+  message: z.string().min(1, "Message cannot be empty"),
+  severity: z.enum(["INFO", "SUCCESS", "WARNING", "ALERT"]).default("INFO"),
+  sendEmail: z.boolean().optional().default(false),
+});
+
+// Define the static tool for listing notifications
+const listNotificationsStaticTool: Tool = {
+  name: "pluggedin_list_notifications",
+  description: "List notifications from the Plugged.in system with optional filters for unread only and result limit",
+  inputSchema: {
+    type: "object",
+    properties: {
+      onlyUnread: {
+        type: "boolean",
+        description: "Filter to show only unread notifications",
+        default: false
+      },
+      limit: {
+        type: "integer",
+        description: "Limit the number of notifications returned (1-100)",
+        minimum: 1,
+        maximum: 100
+      }
+    }
+  }
+};
+
+// Input schema for list notifications validation
+const ListNotificationsInputSchema = z.object({
+  onlyUnread: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+// Define the static tool for marking notification as read
+const markNotificationReadStaticTool: Tool = {
+  name: "pluggedin_mark_notification_read",
+  description: "Mark a notification as read in the Plugged.in system",
+  inputSchema: {
+    type: "object",
+    properties: {
+      notificationId: {
+        type: "string",
+        description: "The ID of the notification to mark as read"
+      }
+    },
+    required: ["notificationId"]
+  }
+};
+
+// Input schema for mark notification read validation
+const MarkNotificationReadInputSchema = z.object({
+  notificationId: z.string().min(1, "Notification ID cannot be empty"),
+});
+
+// Define the static tool for deleting notification
+const deleteNotificationStaticTool: Tool = {
+  name: "pluggedin_delete_notification",
+  description: "Delete a notification from the Plugged.in system",
+  inputSchema: {
+    type: "object",
+    properties: {
+      notificationId: {
+        type: "string",
+        description: "The ID of the notification to delete"
+      }
+    },
+    required: ["notificationId"]
+  }
+};
+
+// Input schema for delete notification validation
+const DeleteNotificationInputSchema = z.object({
+  notificationId: z.string().min(1, "Notification ID cannot be empty"),
+});
+
+// Removed old static tool instances (getToolsInstance, callToolInstance) as they are superseded by API fetching
+
+// Define the static prompt for proxy capabilities
+const proxyCapabilitiesStaticPrompt = {
+  name: "pluggedin_proxy_capabilities",
+  description: "Learn about the Plugged.in MCP Proxy capabilities and available tools",
+  arguments: []
+} as const;
+
+export const createServer = async () => {
+  // Create rate limiters for different operations
+  const toolCallRateLimiter = new RateLimiter(60000, 60); // 60 calls per minute
+  const apiCallRateLimiter = new RateLimiter(60000, 100); // 100 API calls per minute
+  
+  const server = new Server(
+    {
+      name: "PluggedinMCP",
+      version: packageJson.version,
+    },
+    {
+      capabilities: {
+        prompts: {}, // Enable prompt support capability
+        resources: {},
+        tools: {},
+      },
+    }
+  );
+
+  // List Tools Handler - Fetches tools from Pluggedin App API and adds static tool
+  server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+     const apiKey = getPluggedinMCPApiKey();
+     const baseUrl = getPluggedinMCPApiBaseUrl();
+     
+     // If no API key, return only static tools (for Smithery compatibility)
+     // This path should be fast and not rate limited for tool discovery
+     if (!apiKey || !baseUrl) {
+       // Don't log to console for STDIO transport as it interferes with protocol
+       return { 
+         tools: [
+           discoverToolsStaticTool, 
+           ragQueryStaticTool, 
+           sendNotificationStaticTool,
+           listNotificationsStaticTool,
+           markNotificationReadStaticTool,
+           deleteNotificationStaticTool
+         ], 
+         nextCursor: undefined 
+       };
+     }
+     
+     // Rate limit check only for authenticated API calls
+     if (!apiCallRateLimiter.checkLimit()) {
+       throw new Error("Rate limit exceeded. Please try again later.");
+     }
+     
+     let fetchedTools: (Tool & { _serverUuid: string, _serverName?: string })[] = [];
+     
+     try {
+
+       const apiUrl = `${baseUrl}/api/tools`; // Assuming this is the correct endpoint
+
+       // Fetch the list of tools (which include original names and server info)
+       // The API returns an object like { tools: [], message?: "..." }
+       const response = await axios.get<{ tools: (Tool & { _serverUuid: string, _serverName?: string })[], message?: string }>(apiUrl, {
+         headers: {
+           Authorization: `Bearer ${apiKey}`,
+         },
+         timeout: 10000,
+       });
+
+       // Access the 'tools' array from the response payload
+       const fetchedTools = response.data?.tools || [];
+
+       // Clear previous mapping and populate with new data
+       Object.keys(toolToServerMap).forEach(key => delete toolToServerMap[key]); // Clear map
+       
+       // Create mappings for each tool to its server
+       fetchedTools.forEach(tool => {
+         // Store mapping with original name as the key
+         if (tool.name && tool._serverUuid) {
+            toolToServerMap[tool.name] = { 
+              originalName: tool.name, // No transformation needed anymore
+              serverUuid: tool._serverUuid 
+            };
+         } else {
+            debugError(`[ListTools Handler] Missing tool name or UUID for tool: ${tool.name}`);
+         }
+       });
+
+       // Prepare the response payload according to MCP spec { tools: Tool[] }
+       // Remove the internal _serverUuid and _serverName before sending to client
+       const toolsForClient: Tool[] = fetchedTools.map(({ _serverUuid, _serverName, ...rest }) => rest);
+
+       // Note: Pagination not handled here, assumes API returns all tools
+
+       // Always include the static tools
+       const allToolsForClient = [
+         discoverToolsStaticTool, 
+         ragQueryStaticTool, 
+         sendNotificationStaticTool,
+         listNotificationsStaticTool,
+         markNotificationReadStaticTool,
+         deleteNotificationStaticTool,
+         ...toolsForClient
+       ];
+
+       return { tools: allToolsForClient, nextCursor: undefined };
+
+     } catch (error: any) {
+       // Log API fetch error but still return the static tool
+       let sanitizedError = "Failed to list tools";
+       if (axios.isAxiosError(error) && error.response?.status) {
+         // Only include status code, not full error details
+         sanitizedError = `Failed to list tools (HTTP ${error.response.status})`;
+       }
+       debugError("[ListTools Handler Error]", error); // Log full error internally
+       throw new Error(sanitizedError);
+     }
   });
-}
+
+  // Call Tool Handler - Routes tool calls to the appropriate downstream server
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name: requestedToolName, arguments: args } = request.params;
+    const meta = request.params._meta;
+
+    // Basic input validation
+    if (!requestedToolName || typeof requestedToolName !== 'string') {
+      throw new Error("Invalid tool name provided");
+    }
+
+    // Basic request size check (lightweight)
+    if (!validateRequestSize(request.params, 50 * 1024 * 1024)) { // 50MB limit
+      throw new Error("Request payload too large");
+    }
+
+    // Rate limit check for tool calls
+    if (!toolCallRateLimiter.checkLimit()) {
+      throw new Error("Rate limit exceeded. Please try again later.");
+    }
+
+    try {
+        // Handle static discovery tool first
+        if (requestedToolName === discoverToolsStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = DiscoverToolsInputSchema.parse(args ?? {}); // Validate args
+            const { server_uuid, force_refresh } = validatedArgs;
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for discovery trigger.");
+            }
+
+            const timer = createExecutionTimer();
+            let shouldRunDiscovery = force_refresh; // If force_refresh is true, always run discovery
+            let existingDataSummary = "";
+
+            // Check for existing data if not forcing refresh
+            if (!force_refresh) {
+                try {
+                    // Check for existing tools, resources, prompts, and templates with timeout protection
+                    const apiRequests = Promise.all([
+                        axios.get(`${baseUrl}/api/tools`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
+                        axios.get(`${baseUrl}/api/resources`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
+                        axios.get(`${baseUrl}/api/prompts`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 }),
+                        axios.get(`${baseUrl}/api/resource-templates`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000 })
+                    ]);
+                    
+                    const [toolsResponse, resourcesResponse, promptsResponse, templatesResponse] = await withTimeout(apiRequests, 15000);
+
+                    const toolsCount = toolsResponse.data?.tools?.length || (Array.isArray(toolsResponse.data) ? toolsResponse.data.length : 0);
+                    const resourcesCount = Array.isArray(resourcesResponse.data) ? resourcesResponse.data.length : 0;
+                    const promptsCount = Array.isArray(promptsResponse.data) ? promptsResponse.data.length : 0;
+                    const templatesCount = Array.isArray(templatesResponse.data) ? templatesResponse.data.length : 0;
+
+                    const totalItems = toolsCount + resourcesCount + promptsCount + templatesCount;
+
+                    if (totalItems > 0) {
+                        // We have existing data, return it without running discovery
+                        const staticToolsCount = 3; // Always have 3 static tools
+                        const totalToolsCount = toolsCount + staticToolsCount;
+                        existingDataSummary = `Found cached data: ${toolsCount} dynamic tools + ${staticToolsCount} static tools = ${totalToolsCount} total tools, ${resourcesCount} resources, ${promptsCount} prompts, ${templatesCount} templates`;
+                        
+                        const cacheMessage = server_uuid 
+                            ? `Returning cached discovery data for server ${server_uuid}. ${existingDataSummary}. Use force_refresh=true to update.\n\n`
+                            : `Returning cached discovery data for all servers. ${existingDataSummary}. Use force_refresh=true to update.\n\n`;
+
+                        // Format the actual data for the response
+                        let dataContent = cacheMessage;
+                        
+                        // Add static built-in tools section (always available)
+                        dataContent += `## 🔧 Static Built-in Tools (Always Available):\n`;
+                        dataContent += `1. **pluggedin_discover_tools** - Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App\n`;
+                        dataContent += `2. **pluggedin_rag_query** - Performs a RAG query against documents in the Pluggedin App\n`;
+                        dataContent += `3. **pluggedin_send_notification** - Send custom notifications through the Plugged.in system with optional email delivery\n`;
+                        dataContent += `\n`;
+                        
+                        // Add dynamic tools section (from MCP servers)
+                        if (toolsCount > 0) {
+                            const tools = toolsResponse.data?.tools || toolsResponse.data || [];
+                            dataContent += `## ⚡ Dynamic MCP Tools (${toolsCount}) - From Connected Servers:\n`;
+                            tools.forEach((tool: any, index: number) => {
+                                dataContent += `${index + 1}. **${tool.name}**`;
+                                if (tool.description) {
+                                    dataContent += ` - ${tool.description}`;
+                                }
+                                dataContent += `\n`;
+                            });
+                            dataContent += `\n`;
+                        } else {
+                            dataContent += `## ⚡ Dynamic MCP Tools (0) - From Connected Servers:\n`;
+                            dataContent += `No dynamic tools available. Add MCP servers to get more tools.\n\n`;
+                        }
+                        
+                        // Add prompts section  
+                        if (promptsCount > 0) {
+                            dataContent += `## 💬 Available Prompts (${promptsCount}):\n`;
+                            promptsResponse.data.forEach((prompt: any, index: number) => {
+                                dataContent += `${index + 1}. **${prompt.name}**`;
+                                if (prompt.description) {
+                                    dataContent += ` - ${prompt.description}`;
+                                }
+                                dataContent += `\n`;
+                            });
+                            dataContent += `\n`;
+                        }
+                        
+                        // Add resources section
+                        if (resourcesCount > 0) {
+                            dataContent += `## 📄 Available Resources (${resourcesCount}):\n`;
+                            resourcesResponse.data.forEach((resource: any, index: number) => {
+                                dataContent += `${index + 1}. **${resource.name || resource.uri}**`;
+                                if (resource.description) {
+                                    dataContent += ` - ${resource.description}`;
+                                }
+                                if (resource.uri && resource.name !== resource.uri) {
+                                    dataContent += ` (${resource.uri})`;
+                                }
+                                dataContent += `\n`;
+                            });
+                            dataContent += `\n`;
+                        }
+                        
+                        // Add templates section
+                        if (templatesCount > 0) {
+                            dataContent += `## 📋 Available Resource Templates (${templatesCount}):\n`;
+                            templatesResponse.data.forEach((template: any, index: number) => {
+                                dataContent += `${index + 1}. **${template.name || template.uriTemplate}**`;
+                                if (template.description) {
+                                    dataContent += ` - ${template.description}`;
+                                }
+                                if (template.uriTemplate && template.name !== template.uriTemplate) {
+                                    dataContent += ` (${template.uriTemplate})`;
+                                }
+                                dataContent += `\n`;
+                            });
+                        }
+
+                        // Log successful cache hit
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System (Cache)',
+                            serverUuid: 'pluggedin_discovery_cache',
+                            itemName: requestedToolName,
+                            success: true,
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+
+                        return {
+                            content: [{ type: "text", text: dataContent }],
+                            isError: false,
+                        } as ToolExecutionResult;
+                    } else {
+                        // No existing data found, run discovery
+                        shouldRunDiscovery = true;
+                        existingDataSummary = "No cached dynamic data found";
+                    }
+                } catch (cacheError: any) {
+                    // Error checking cache, show static tools and proceed with discovery
+                    debugError(`[Discovery Cache Check] Error checking for existing data: ${cacheError.message}`);
+                    
+                    // Show static tools even when cache check fails
+                    const staticToolsCount = 3;
+                    const cacheErrorMessage = `Cache check failed, showing static tools. Will run discovery for dynamic tools.\n\n`;
+                    
+                    let staticContent = cacheErrorMessage;
+                    staticContent += `## 🔧 Static Built-in Tools (Always Available):\n`;
+                    staticContent += `1. **pluggedin_discover_tools** - Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App\n`;
+                    staticContent += `2. **pluggedin_rag_query** - Performs a RAG query against documents in the Pluggedin App\n`;
+                    staticContent += `3. **pluggedin_send_notification** - Send custom notifications through the Plugged.in system with optional email delivery\n`;
+                    staticContent += `\n## ⚡ Dynamic MCP Tools - From Connected Servers:\n`;
+                    staticContent += `Cache check failed. Running discovery to find dynamic tools...\n\n`;
+                    staticContent += `Note: You can call pluggedin_discover_tools again to see the updated results.`;
+
+                    // Log cache error but static tools shown
+                    logMcpActivity({
+                        action: 'tool_call',
+                        serverName: 'Discovery System (Cache Error)',
+                        serverUuid: 'pluggedin_discovery_cache_error',
+                        itemName: requestedToolName,
+                        success: true,
+                        executionTime: timer.stop(),
+                    }).catch(() => {}); // Ignore notification errors
+
+                    // Also trigger discovery in background (fire and forget)
+                    try {
+                        const discoveryApiUrl = server_uuid
+                            ? `${baseUrl}/api/discover/${server_uuid}`
+                            : `${baseUrl}/api/discover/all`;
+                        
+                        axios.post(discoveryApiUrl, {}, {
+                            headers: { Authorization: `Bearer ${apiKey}` },
+                            timeout: 60000, // Background discovery timeout
+                        }).catch(() => {}); // Fire and forget
+                    } catch {
+                        // Ignore discovery trigger errors
+                    }
+
+                    return {
+                        content: [{ type: "text", text: staticContent }],
+                        isError: false,
+                    } as ToolExecutionResult;
+                }
+            }
+
+            // Run discovery if needed
+            if (shouldRunDiscovery) {
+                // Define the API endpoint in pluggedin-app to trigger discovery
+                const discoveryApiUrl = server_uuid
+                    ? `${baseUrl}/api/discover/${server_uuid}` // Endpoint for specific server
+                    : `${baseUrl}/api/discover/all`; // Endpoint for all servers
+
+                if (force_refresh) {
+                    // For force refresh, get cached data first AND trigger discovery in background
+                    try {
+                        // Fire-and-forget: trigger discovery in background
+                        axios.post(discoveryApiUrl, {}, {
+                            headers: { Authorization: `Bearer ${apiKey}` },
+                            timeout: 60000, // 60s timeout for background discovery
+                        }).catch((bgError) => {
+                            debugError(`[Background Discovery] Failed: ${bgError.message}`);
+                        });
+
+                        // Get current cached data to show immediately
+                        let forceRefreshContent = "";
+                        
+                        try {
+                            // Fetch current cached data (use shorter timeout since this is just cache check)
+                            const [toolsResponse, resourcesResponse, promptsResponse, templatesResponse] = await Promise.all([
+                                axios.get(`${baseUrl}/api/tools`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 5000 }),
+                                axios.get(`${baseUrl}/api/resources`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 5000 }),
+                                axios.get(`${baseUrl}/api/prompts`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 5000 }),
+                                axios.get(`${baseUrl}/api/resource-templates`, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 5000 })
+                            ]);
+
+                            const toolsCount = toolsResponse.data?.tools?.length || (Array.isArray(toolsResponse.data) ? toolsResponse.data.length : 0);
+                            const resourcesCount = Array.isArray(resourcesResponse.data) ? resourcesResponse.data.length : 0;
+                            const promptsCount = Array.isArray(promptsResponse.data) ? promptsResponse.data.length : 0;
+                            const templatesCount = Array.isArray(templatesResponse.data) ? templatesResponse.data.length : 0;
+
+                            const staticToolsCount = 3;
+                            const totalToolsCount = toolsCount + staticToolsCount;
+                            
+                            const refreshMessage = server_uuid 
+                                ? `🔄 Force refresh initiated for server ${server_uuid}. Discovery is running in background.\n\nShowing current cached data (${toolsCount} dynamic tools + ${staticToolsCount} static tools = ${totalToolsCount} total tools, ${resourcesCount} resources, ${promptsCount} prompts, ${templatesCount} templates):\n\n`
+                                : `🔄 Force refresh initiated for all servers. Discovery is running in background.\n\nShowing current cached data (${toolsCount} dynamic tools + ${staticToolsCount} static tools = ${totalToolsCount} total tools, ${resourcesCount} resources, ${promptsCount} prompts, ${templatesCount} templates):\n\n`;
+
+                            forceRefreshContent = refreshMessage;
+                            
+                            // Add static built-in tools section (always available)
+                            forceRefreshContent += `## 🔧 Static Built-in Tools (Always Available):\n`;
+                            forceRefreshContent += `1. **pluggedin_discover_tools** - Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App\n`;
+                            forceRefreshContent += `2. **pluggedin_rag_query** - Performs a RAG query against documents in the Pluggedin App\n`;
+                            forceRefreshContent += `3. **pluggedin_send_notification** - Send custom notifications through the Plugged.in system with optional email delivery\n`;
+                            forceRefreshContent += `\n`;
+                            
+                            // Add dynamic tools section (from MCP servers)
+                            if (toolsCount > 0) {
+                                const tools = toolsResponse.data?.tools || toolsResponse.data || [];
+                                forceRefreshContent += `## ⚡ Dynamic MCP Tools (${toolsCount}) - From Connected Servers:\n`;
+                                tools.forEach((tool: any, index: number) => {
+                                    forceRefreshContent += `${index + 1}. **${tool.name}**`;
+                                    if (tool.description) {
+                                        forceRefreshContent += ` - ${tool.description}`;
+                                    }
+                                    forceRefreshContent += `\n`;
+                                });
+                                forceRefreshContent += `\n`;
+                            } else {
+                                forceRefreshContent += `## ⚡ Dynamic MCP Tools (0) - From Connected Servers:\n`;
+                                forceRefreshContent += `No dynamic tools available. Add MCP servers to get more tools.\n\n`;
+                            }
+                            
+                            // Add prompts section  
+                            if (promptsCount > 0) {
+                                forceRefreshContent += `## 💬 Available Prompts (${promptsCount}):\n`;
+                                promptsResponse.data.forEach((prompt: any, index: number) => {
+                                    forceRefreshContent += `${index + 1}. **${prompt.name}**`;
+                                    if (prompt.description) {
+                                        forceRefreshContent += ` - ${prompt.description}`;
+                                    }
+                                    forceRefreshContent += `\n`;
+                                });
+                                forceRefreshContent += `\n`;
+                            }
+                            
+                            // Add resources section
+                            if (resourcesCount > 0) {
+                                forceRefreshContent += `## 📄 Available Resources (${resourcesCount}):\n`;
+                                resourcesResponse.data.forEach((resource: any, index: number) => {
+                                    forceRefreshContent += `${index + 1}. **${resource.name || resource.uri}**`;
+                                    if (resource.description) {
+                                        forceRefreshContent += ` - ${resource.description}`;
+                                    }
+                                    if (resource.uri && resource.name !== resource.uri) {
+                                        forceRefreshContent += ` (${resource.uri})`;
+                                    }
+                                    forceRefreshContent += `\n`;
+                                });
+                                forceRefreshContent += `\n`;
+                            }
+                            
+                            // Add templates section
+                            if (templatesCount > 0) {
+                                forceRefreshContent += `## 📋 Available Resource Templates (${templatesCount}):\n`;
+                                templatesResponse.data.forEach((template: any, index: number) => {
+                                    forceRefreshContent += `${index + 1}. **${template.name || template.uriTemplate}**`;
+                                    if (template.description) {
+                                        forceRefreshContent += ` - ${template.description}`;
+                                    }
+                                    if (template.uriTemplate && template.name !== template.uriTemplate) {
+                                        forceRefreshContent += ` (${template.uriTemplate})`;
+                                    }
+                                    forceRefreshContent += `\n`;
+                                });
+                                forceRefreshContent += `\n`;
+                            }
+                            
+                            forceRefreshContent += `📝 **Note**: Fresh discovery is running in background. Call pluggedin_discover_tools() again in 10-30 seconds to see if any new tools were discovered.`;
+
+                        } catch (cacheError: any) {
+                            // If we can't get cached data, just show static tools
+                            forceRefreshContent = server_uuid 
+                                ? `🔄 Force refresh initiated for server ${server_uuid}. Discovery is running in background.\n\nCould not retrieve cached data, showing static tools:\n\n`
+                                : `🔄 Force refresh initiated for all servers. Discovery is running in background.\n\nCould not retrieve cached data, showing static tools:\n\n`;
+                                
+                            forceRefreshContent += `## 🔧 Static Built-in Tools (Always Available):\n`;
+                            forceRefreshContent += `1. **pluggedin_discover_tools** - Triggers discovery of tools (and resources/templates) for configured MCP servers in the Pluggedin App\n`;
+                            forceRefreshContent += `2. **pluggedin_rag_query** - Performs a RAG query against documents in the Pluggedin App\n`;
+                            forceRefreshContent += `3. **pluggedin_send_notification** - Send custom notifications through the Plugged.in system with optional email delivery\n`;
+                            forceRefreshContent += `\n📝 **Note**: Fresh discovery is running in background. Call pluggedin_discover_tools() again in 10-30 seconds to see updated results.`;
+                        }
+
+                        // Log successful trigger
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System (Background)',
+                            serverUuid: 'pluggedin_discovery_bg',
+                            itemName: requestedToolName,
+                            success: true,
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+                        
+                        return {
+                            content: [{ type: "text", text: forceRefreshContent }],
+                            isError: false,
+                        } as ToolExecutionResult;
+
+                    } catch (triggerError: any) {
+                        // Even trigger failed, return error
+                        const errorMsg = `Failed to trigger background discovery: ${triggerError.message}`;
+                        
+                        // Log failed trigger
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System',
+                            serverUuid: 'pluggedin_discovery',
+                            itemName: requestedToolName,
+                            success: false,
+                            errorMessage: errorMsg,
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+                        
+                        throw new Error(errorMsg);
+                    }
+                } else {
+                    // For regular discovery (no force refresh), wait for completion
+                    try {
+                        const discoveryResponse = await axios.post(discoveryApiUrl, {}, {
+                            headers: { Authorization: `Bearer ${apiKey}` },
+                            timeout: 30000, // 30s timeout for regular discovery
+                        });
+
+                        // Return success message from the discovery API response
+                        const baseMessage = discoveryResponse.data?.message || "Discovery process initiated.";
+                        const contextMessage = `${existingDataSummary}. ${baseMessage}\n\nNote: You can call pluggedin_discover_tools again to see the cached results including both static and dynamic tools.`;
+                        
+                        // Log successful discovery
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System',
+                            serverUuid: 'pluggedin_discovery',
+                            itemName: requestedToolName,
+                            success: true,
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+                        
+                        return {
+                            content: [{ type: "text", text: contextMessage }],
+                            isError: false,
+                        } as ToolExecutionResult;
+
+                    } catch (apiError: any) {
+                        // Log failed discovery
+                        logMcpActivity({
+                            action: 'tool_call',
+                            serverName: 'Discovery System',
+                            serverUuid: 'pluggedin_discovery',
+                            itemName: requestedToolName,
+                            success: false,
+                            errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                            executionTime: timer.stop(),
+                        }).catch(() => {}); // Ignore notification errors
+                        
+                         const errorMsg = axios.isAxiosError(apiError)
+                            ? `API Error (${apiError.response?.status}): ${apiError.response?.data?.error || apiError.message}`
+                            : apiError.message;
+                         throw new Error(`Failed to trigger discovery via API: ${errorMsg}`);
+                    }
+                }
+            }
+        }
+
+        // Handle static RAG query tool
+        if (requestedToolName === ragQueryStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = RagQueryInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for RAG query.");
+            }
+
+            // Define the API endpoint in pluggedin-app for RAG queries
+            const ragApiUrl = `${baseUrl}/api/rag/query`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make POST request with RAG query (ragIdentifier removed for security)
+                const ragResponse = await axios.post(ragApiUrl, {
+                    query: validatedArgs.query,
+                }, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 15000, // Reduced timeout to prevent DoS
+                    responseType: 'text' // Expect text response, not JSON
+                });
+
+                // The API returns plain text response
+                const responseText = ragResponse.data || "No response generated";
+                
+                // Log successful RAG query
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'RAG System',
+                    serverUuid: 'pluggedin_rag',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult; // Cast to expected type
+
+            } catch (apiError: any) {
+                 // Log failed RAG query
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'RAG System',
+                     serverUuid: 'pluggedin_rag',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Sanitized error message to prevent information disclosure
+                 const errorMsg = axios.isAxiosError(apiError) && apiError.response?.status
+                    ? `RAG service error (${apiError.response.status})`
+                    : "RAG service temporarily unavailable";
+                 throw new Error(errorMsg);
+            }
+        }
+
+        // Handle static send notification tool
+        if (requestedToolName === sendNotificationStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = SendNotificationInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for custom notifications.");
+            }
+
+            // Define the API endpoint in pluggedin-app for custom notifications
+            const notificationApiUrl = `${baseUrl}/api/notifications/custom`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make POST request with notification data
+                const notificationResponse = await axios.post(notificationApiUrl, {
+                    title: validatedArgs.title,
+                    message: validatedArgs.message,
+                    severity: validatedArgs.severity,
+                    sendEmail: validatedArgs.sendEmail,
+                }, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 30000, // Increased timeout for notifications
+                });
+
+                // The API returns success confirmation
+                const responseData = notificationResponse.data;
+                const responseText = responseData?.message || "Notification sent successfully";
+                
+                // Log successful notification
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Notification System',
+                    serverUuid: 'pluggedin_notifications',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult; // Cast to expected type
+
+            } catch (apiError: any) {
+                 // Log failed notification
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'Notification System',
+                     serverUuid: 'pluggedin_notifications',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Sanitized error message
+                 const errorMsg = axios.isAxiosError(apiError) && apiError.response?.status
+                    ? `Notification service error (${apiError.response.status})`
+                    : "Notification service temporarily unavailable";
+                 throw new Error(errorMsg);
+            }
+        }
+
+        // Handle static list notifications tool
+        if (requestedToolName === listNotificationsStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = ListNotificationsInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for listing notifications.");
+            }
+
+            // Build query parameters
+            const queryParams = new URLSearchParams();
+            if (validatedArgs.onlyUnread) {
+                queryParams.append('onlyUnread', 'true');
+            }
+            if (validatedArgs.limit) {
+                queryParams.append('limit', validatedArgs.limit.toString());
+            }
+
+            const notificationApiUrl = `${baseUrl}/api/notifications${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make GET request to list notifications
+                const notificationResponse = await axios.get(notificationApiUrl, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                    },
+                    timeout: 15000,
+                });
+
+                const notifications = notificationResponse.data?.notifications || [];
+                
+                // Format the response for better readability
+                let responseText = `Found ${notifications.length} notification${notifications.length !== 1 ? 's' : ''}`;
+                if (validatedArgs.onlyUnread) {
+                    responseText += ' (unread only)';
+                }
+                responseText += ':\n\n';
+                
+                if (notifications.length === 0) {
+                    responseText += 'No notifications found.';
+                } else {
+                    notifications.forEach((notif: any, index: number) => {
+                        responseText += `${index + 1}. **${notif.title}**\n`;
+                        responseText += `   ID: ${notif.id} (use this ID for operations)\n`;
+                        responseText += `   Type: ${notif.type} | Severity: ${notif.severity || 'N/A'}\n`;
+                        responseText += `   Status: ${notif.read ? 'Read' : 'Unread'}${notif.completed ? ' | Completed' : ''}\n`;
+                        responseText += `   Created: ${new Date(notif.created_at).toLocaleString()}\n`;
+                        responseText += `   Message: ${notif.message}\n`;
+                        if (notif.link) {
+                            responseText += `   Link: ${notif.link}\n`;
+                        }
+                        responseText += '\n';
+                    });
+                    responseText += '💡 **Tip**: Use the UUID shown in the ID field when marking as read or deleting notifications.';
+                }
+                
+                // Log successful list
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Notification System',
+                    serverUuid: 'pluggedin_notifications',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult;
+
+            } catch (apiError: any) {
+                 // Log failed list
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'Notification System',
+                     serverUuid: 'pluggedin_notifications',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Sanitized error message
+                 const errorMsg = axios.isAxiosError(apiError) && apiError.response?.status
+                    ? `Notification service error (${apiError.response.status})`
+                    : "Notification service temporarily unavailable";
+                 throw new Error(errorMsg);
+            }
+        }
+
+        // Handle static mark notification as read tool
+        if (requestedToolName === markNotificationReadStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = MarkNotificationReadInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for marking notifications.");
+            }
+
+            const notificationApiUrl = `${baseUrl}/api/notifications/${validatedArgs.notificationId}/read`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make PATCH request to mark notification as read
+                const notificationResponse = await axios.patch(notificationApiUrl, {}, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                    },
+                    timeout: 15000,
+                });
+
+                const responseText = notificationResponse.data?.message || "Notification marked as read";
+                
+                // Log successful mark as read
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Notification System',
+                    serverUuid: 'pluggedin_notifications',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult;
+
+            } catch (apiError: any) {
+                 // Log failed mark as read
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'Notification System',
+                     serverUuid: 'pluggedin_notifications',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Handle specific error cases
+                 let errorMsg = "Failed to mark notification as read";
+                 if (axios.isAxiosError(apiError)) {
+                     if (apiError.response?.status === 404) {
+                         errorMsg = "Notification not found or not accessible";
+                     } else if (apiError.response?.status) {
+                         errorMsg = `Notification service error (${apiError.response.status})`;
+                     }
+                 }
+                 throw new Error(errorMsg);
+            }
+        }
+
+        // Handle static delete notification tool
+        if (requestedToolName === deleteNotificationStaticTool.name) {
+            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
+            const validatedArgs = DeleteNotificationInputSchema.parse(args ?? {}); // Validate args
+
+            const apiKey = getPluggedinMCPApiKey();
+            const baseUrl = getPluggedinMCPApiBaseUrl();
+            if (!apiKey || !baseUrl) {
+                throw new Error("Pluggedin API Key or Base URL is not configured for deleting notifications.");
+            }
+
+            const notificationApiUrl = `${baseUrl}/api/notifications/${validatedArgs.notificationId}`;
+            const timer = createExecutionTimer();
+
+            try {
+                // Make DELETE request to delete notification
+                const notificationResponse = await axios.delete(notificationApiUrl, {
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                    },
+                    timeout: 15000,
+                });
+
+                const responseText = notificationResponse.data?.message || "Notification deleted successfully";
+                
+                // Log successful delete
+                logMcpActivity({
+                    action: 'tool_call',
+                    serverName: 'Notification System',
+                    serverUuid: 'pluggedin_notifications',
+                    itemName: requestedToolName,
+                    success: true,
+                    executionTime: timer.stop(),
+                }).catch(() => {}); // Ignore notification errors
+                
+                return {
+                    content: [{ type: "text", text: responseText }],
+                    isError: false,
+                } as ToolExecutionResult;
+
+            } catch (apiError: any) {
+                 // Log failed delete
+                 logMcpActivity({
+                     action: 'tool_call',
+                     serverName: 'Notification System',
+                     serverUuid: 'pluggedin_notifications',
+                     itemName: requestedToolName,
+                     success: false,
+                     errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
+                     executionTime: timer.stop(),
+                 }).catch(() => {}); // Ignore notification errors
+                 
+                 // Handle specific error cases
+                 let errorMsg = "Failed to delete notification";
+                 if (axios.isAxiosError(apiError)) {
+                     if (apiError.response?.status === 404) {
+                         errorMsg = "Notification not found or not accessible";
+                     } else if (apiError.response?.status) {
+                         errorMsg = `Notification service error (${apiError.response.status})`;
+                     }
+                 }
+                 throw new Error(errorMsg);
+            }
+        }
+
+        // Look up the downstream tool in our map
+        const toolInfo = toolToServerMap[requestedToolName];
+        if (!toolInfo) {
+            throw new Error(`Tool not found: ${requestedToolName}`);
+        }
+
+        const { originalName, serverUuid } = toolInfo;
+
+        // Basic server UUID validation
+        if (!serverUuid || typeof serverUuid !== 'string') {
+            throw new Error("Invalid server UUID");
+        }
+
+        // Get the downstream server session
+        const serverParams = await getMcpServers(true);
+        
+        const params = serverParams[serverUuid];
+        if (!params) {
+            throw new Error(`Configuration not found for server UUID: ${serverUuid} associated with tool ${requestedToolName}`);
+        }
+        const sessionKey = getSessionKey(serverUuid, params);
+        const session = await getSession(sessionKey, serverUuid, params);
+
+        if (!session) {
+            throw new Error(`Session not found for server UUID: ${serverUuid}`);
+        }
+
+        // Proxy the call to the downstream server using the original tool name
+        debugError(`[CallTool Proxy] Calling tool '${originalName}' on server ${serverUuid}`);
+        const timer = createExecutionTimer();
+        
+        try {
+            const result = await session.client.request(
+                { method: "tools/call", params: { name: originalName, arguments: args, _meta: meta } },
+                 CompatibilityCallToolResultSchema
+            );
+
+            // Log successful tool call
+            logMcpActivity({
+                action: 'tool_call',
+                serverName: params.name || serverUuid,
+                serverUuid,
+                itemName: originalName,
+                success: true,
+                executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+
+            // Return the result directly, casting to any to satisfy the handler's complex return type
+            return result as any;
+        } catch (toolError) {
+            // Log failed tool call
+            logMcpActivity({
+                action: 'tool_call',
+                serverName: params.name || serverUuid,
+                serverUuid,
+                itemName: originalName,
+                success: false,
+                errorMessage: toolError instanceof Error ? toolError.message : String(toolError),
+                executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            // Re-throw the original error
+            throw toolError;
+        }
+
+    } catch (error) {
+      const sanitizedError = sanitizeErrorMessage(error);
+      // Use requestedToolName here, which is in scope
+      debugError(`[CallTool Handler Error] Tool: ${requestedToolName || 'unknown'}, Error: ${sanitizedError}`);
+
+      // Re-throw the error for the SDK to format and send back to the client
+      if (error instanceof Error) {
+         // Create a new error with sanitized message to prevent info disclosure
+         throw new Error(sanitizedError);
+      } else {
+         throw new Error(sanitizedError || "An unknown error occurred during tool execution");
+      }
+    }
+  });
+
+  // Get Prompt Handler - Handles static prompts, custom instructions, and standard prompts
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    const meta = request.params._meta;
+    const instructionPrefix = 'pluggedin_instruction_';
+
+    // Handle static proxy capabilities prompt first
+    if (name === proxyCapabilitiesStaticPrompt.name) {
+      const timer = createExecutionTimer();
+      
+      try {
+        // Log successful static prompt retrieval
+        logMcpActivity({
+          action: 'prompt_get',
+          serverName: 'Proxy System',
+          serverUuid: 'pluggedin_proxy',
+          itemName: name,
+          success: true,
+          executionTime: timer.stop(),
+        }).catch(() => {}); // Ignore notification errors
+        
+        return {
+          messages: [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: `# Plugged.in MCP Proxy Capabilities
+
+The Plugged.in MCP Proxy is a powerful gateway that provides access to multiple MCP servers and built-in tools. Here's what you can do:
+
+## 🔧 Built-in Static Tools
+
+### 1. **pluggedin_discover_tools**
+- **Purpose**: Trigger discovery of tools and resources from configured MCP servers
+- **Parameters**: 
+  - \`server_uuid\` (optional): Discover from specific server, or all servers if omitted
+  - \`force_refresh\` (optional): Set to true to trigger background discovery and return immediately (defaults to false)
+- **Usage**: Returns cached data instantly if available. Use \`force_refresh=true\` to update data in background, then call again without force_refresh to see results.
+
+### 2. **pluggedin_rag_query**
+- **Purpose**: Perform RAG (Retrieval-Augmented Generation) queries against your documents
+- **Parameters**:
+  - \`query\` (required): The search query (1-1000 characters)
+- **Usage**: Search through uploaded documents and knowledge base
+
+### 3. **pluggedin_send_notification**
+- **Purpose**: Send custom notifications through the Plugged.in system
+- **Parameters**:
+  - \`message\` (required): The notification message content
+  - \`title\` (optional): Custom notification title
+  - \`severity\` (optional): INFO, SUCCESS, WARNING, or ALERT (defaults to INFO)
+  - \`sendEmail\` (optional): Whether to also send via email (defaults to false)
+- **Usage**: Create custom notifications with optional email delivery
+
+### 4. **pluggedin_list_notifications**
+- **Purpose**: List notifications from the Plugged.in system
+- **Parameters**:
+  - \`onlyUnread\` (optional): Filter to show only unread notifications (defaults to false)
+  - \`limit\` (optional): Limit the number of notifications returned (1-100)
+- **Usage**: Retrieve and check your notifications with optional filters
+
+### 5. **pluggedin_mark_notification_read**
+- **Purpose**: Mark a notification as read
+- **Parameters**:
+  - \`notificationId\` (required): The ID of the notification to mark as read
+- **Usage**: Update notification status to read
+
+### 6. **pluggedin_delete_notification**
+- **Purpose**: Delete a notification
+- **Parameters**:
+  - \`notificationId\` (required): The ID of the notification to delete
+- **Usage**: Remove notifications from your list
+
+## 🔗 Proxy Features
+
+### MCP Server Management
+- **Auto-discovery**: Automatically discovers tools, prompts, and resources from configured servers
+- **Session Management**: Maintains persistent connections to downstream MCP servers
+- **Error Handling**: Graceful error handling and recovery for server connections
+
+### Authentication & Security
+- **API Key Authentication**: Secure access using your Plugged.in API key
+- **Profile-based Access**: All operations are scoped to your active profile
+- **Audit Logging**: All MCP activities are logged for monitoring and debugging
+
+### Notification System
+- **Activity Tracking**: Automatic logging of all MCP operations (tools, prompts, resources)
+- **Performance Metrics**: Execution timing for all operations
+- **Custom Notifications**: Send custom notifications with email delivery options
+
+## 🚀 Getting Started
+
+1. **Configure Environment**: Set \`PLUGGEDIN_API_KEY\` and \`PLUGGEDIN_API_BASE_URL\`
+2. **Discover Tools**: Run \`pluggedin_discover_tools\` to see available tools from your servers
+3. **Use Tools**: Call any discovered tool through the proxy
+4. **Query Documents**: Use \`pluggedin_rag_query\` to search your knowledge base
+5. **Manage Notifications**: Use notification tools to send, list, mark as read, and delete notifications
+
+## 📊 Monitoring
+
+- Check the Plugged.in app notifications to see MCP activity logs
+- Monitor execution times and success rates
+- View custom notifications in the notification center
+
+The proxy acts as a unified gateway to all your MCP capabilities while providing enhanced features like RAG, notifications, and comprehensive logging.`
+              }
+            }
+          ]
+        };
+      } catch (error) {
+        // Log failed static prompt retrieval
+        logMcpActivity({
+          action: 'prompt_get',
+          serverName: 'Proxy System',
+          serverUuid: 'pluggedin_proxy',
+          itemName: name,
+          success: false,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          executionTime: timer.stop(),
+        }).catch(() => {}); // Ignore notification errors
+        
+        throw error;
+      }
+    }
+
+    try {
+      const apiKey = getPluggedinMCPApiKey();
+      const baseUrl = getPluggedinMCPApiBaseUrl();
+      if (!apiKey || !baseUrl) {
+        throw new Error("Pluggedin API Key or Base URL is not configured.");
+      }
+
+      if (name.startsWith(instructionPrefix)) {
+        // --- Handle Custom Instruction Request ---
+        debugError(`[GetPrompt Handler] Detected custom instruction prefix for: ${name}`);
+        const instructionData = instructionToServerMap[name];
+        debugError(`[GetPrompt Handler] Looked up instruction from map:`, JSON.stringify(instructionData, null, 2)); // Log instruction data
+        if (!instructionData) {
+           debugError(`[GetPrompt Handler] Current instructionToServerMap:`, JSON.stringify(Object.keys(instructionToServerMap))); // Log the map keys
+          throw new Error(`Custom instruction not found in map: ${name}. Try listing prompts again.`);
+        }
+
+        const timer = createExecutionTimer();
+        
+        try {
+          // Custom instructions from the API should have an instruction field
+          const messages: PromptMessage[] = [];
+          
+          // First check if there's an instruction field (the actual content)
+          if (instructionData.instruction) {
+            debugError(`[GetPrompt Handler] Found instruction field:`, instructionData.instruction);
+            
+            // Parse the instruction content - it should be a JSON array
+            try {
+              const parsedInstruction = typeof instructionData.instruction === 'string' 
+                ? JSON.parse(instructionData.instruction)
+                : instructionData.instruction;
+                
+              if (Array.isArray(parsedInstruction)) {
+                for (const msg of parsedInstruction) {
+                  if (msg.role === "system") {
+                    // Convert system messages to user messages with a prefix
+                    messages.push({
+                      role: "user",
+                      content: {
+                        type: "text",
+                        text: `System: ${msg.content}`
+                      }
+                    });
+                  } else if (msg.role === "user" || msg.role === "assistant") {
+                    // Keep user and assistant messages as-is
+                    messages.push({
+                      role: msg.role,
+                      content: {
+                        type: "text",
+                        text: msg.content
+                      }
+                    });
+                  }
+                }
+              } else {
+                // If not an array, use as a single message
+                messages.push({
+                  role: "assistant",
+                  content: {
+                    type: "text",
+                    text: String(parsedInstruction)
+                  }
+                });
+              }
+            } catch (parseError) {
+              debugError(`[GetPrompt Handler] Failed to parse instruction:`, parseError);
+              // If parsing fails, use the instruction as-is
+              messages.push({
+                role: "assistant",
+                content: {
+                  type: "text",
+                  text: instructionData.instruction
+                }
+              });
+            }
+          } else if (instructionData.description) {
+            // Fallback to description if no instruction field
+            debugError(`[GetPrompt Handler] No instruction field, using description:`, instructionData.description);
+            messages.push({
+              role: "assistant",
+              content: {
+                type: "text",
+                text: instructionData.description
+              }
+            });
+          } else {
+            debugError(`[GetPrompt Handler] No instruction or description found in:`, instructionData);
+            messages.push({
+              role: "assistant",
+              content: {
+                type: "text",
+                text: "No instruction content available"
+              }
+            });
+          }
+
+          // Log successful custom instruction retrieval
+          logMcpActivity({
+            action: 'prompt_get',
+            serverName: 'Custom Instructions',
+            serverUuid: instructionData._serverUuid || 'unknown',
+            itemName: name,
+            success: true,
+            executionTime: timer.stop(),
+          }).catch(() => {}); // Ignore notification errors
+
+          // Return the formatted messages
+          return {
+            messages: messages,
+          } as z.infer<typeof GetPromptResultSchema>; // Ensure correct type
+
+        } catch (apiError: any) {
+           const errorMsg = axios.isAxiosError(apiError)
+              ? `API Error (${apiError.response?.status}) fetching instruction ${name}: ${apiError.response?.data?.error || apiError.message}`
+              : apiError.message;
+              
+           // Log failed custom instruction retrieval
+           logMcpActivity({
+             action: 'prompt_get',
+             serverName: 'Custom Instructions',
+             serverUuid: instructionData?._serverUuid || 'unknown',
+             itemName: name,
+             success: false,
+             errorMessage: errorMsg,
+             executionTime: timer.stop(),
+           }).catch(() => {}); // Ignore notification errors
+           
+           throw new Error(`Failed to fetch custom instruction details: ${errorMsg}`);
+        }
+
+      } else {
+        // --- Handle Standard Prompt Request (Existing Logic) ---
+        debugError(`[GetPrompt Handler] No custom instruction prefix detected for: ${name}. Proceeding with standard prompt resolution.`);
+        // 1. Call the resolve API endpoint to find which server has this prompt
+        const resolveApiUrl = `${baseUrl}/api/resolve/prompt?name=${encodeURIComponent(name)}`;
+         debugError(`[GetPrompt Handler] Calling resolve API: ${resolveApiUrl}`); // Log API call
+        const resolveResponse = await axios.get<{uuid: string}>(resolveApiUrl, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 10000,
+        });
+
+        const resolvedData = resolveResponse.data;
+        if (!resolvedData || !resolvedData.uuid) {
+          throw new Error(`Could not resolve server details for prompt name: ${name}`);
+        }
+
+        // 2. Get FRESH server configuration using the same method as tools
+        const serverParamsMap = await getMcpServers(true);
+        const serverParams = serverParamsMap[resolvedData.uuid];
+        
+        if (!serverParams) {
+          throw new Error(`Configuration not found for server UUID: ${resolvedData.uuid} associated with prompt ${name}`);
+        }
+
+        // 3. Get the downstream server session using fresh config
+        const sessionKey = getSessionKey(serverParams.uuid, serverParams);
+        const session = await getSession(sessionKey, serverParams.uuid, serverParams);
+
+        if (!session) {
+          debugError(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+          await initSessions();
+          const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
+          if (!refreshedSession) {
+            throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling prompt: ${name}`);
+          }
+          // Use the refreshed session
+          debugError(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
+          const timer = createExecutionTimer();
+          
+          try {
+            const result = await refreshedSession.client.request(
+              { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
+              GetPromptResultSchema
+            );
+            
+            // Log successful prompt retrieval
+            logMcpActivity({
+              action: 'prompt_get',
+              serverName: serverParams.name || serverParams.uuid,
+              serverUuid: serverParams.uuid,
+              itemName: name,
+              success: true,
+              executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            return result;
+          } catch (promptError) {
+            // Log failed prompt retrieval
+            logMcpActivity({
+              action: 'prompt_get',
+              serverName: serverParams.name || serverParams.uuid,
+              serverUuid: serverParams.uuid,
+              itemName: name,
+              success: false,
+              errorMessage: promptError instanceof Error ? promptError.message : String(promptError),
+              executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            throw promptError;
+          }
+        } else {
+          // Use the existing session
+          debugError(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
+          const timer = createExecutionTimer();
+          
+          try {
+            const result = await session.client.request(
+              { method: "prompts/get", params: { name, arguments: args, _meta: meta } },
+              GetPromptResultSchema
+            );
+            
+            // Log successful prompt retrieval
+            logMcpActivity({
+              action: 'prompt_get',
+              serverName: serverParams.name || serverParams.uuid,
+              serverUuid: serverParams.uuid,
+              itemName: name,
+              success: true,
+              executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            return result;
+          } catch (promptError) {
+            // Log failed prompt retrieval
+            logMcpActivity({
+              action: 'prompt_get',
+              serverName: serverParams.name || serverParams.uuid,
+              serverUuid: serverParams.uuid,
+              itemName: name,
+              success: false,
+              errorMessage: promptError instanceof Error ? promptError.message : String(promptError),
+              executionTime: timer.stop(),
+            }).catch(() => {}); // Ignore notification errors
+            
+            throw promptError;
+          }
+        }
+      }
+    } catch (error: any) {
+      const errorMessage = axios.isAxiosError(error)
+        ? `API Error (${error.response?.status}) resolving/getting prompt ${name}: ${error.response?.data?.error || error.message}`
+        : error instanceof Error
+        ? error.message
+        : `Unknown error getting prompt: ${name}`;
+      debugError("[GetPrompt Handler Error]", errorMessage);
+      throw new Error(`Failed to get prompt ${name}: ${errorMessage}`);
+    }
+  });
+
+  // List Prompts Handler - Fetches aggregated list from Pluggedin App API
+  server.setRequestHandler(ListPromptsRequestSchema, async (request) => {
+    try {
+      const apiKey = getPluggedinMCPApiKey();
+      const baseUrl = getPluggedinMCPApiBaseUrl();
+      if (!apiKey || !baseUrl) {
+        throw new Error("Pluggedin API Key or Base URL is not configured.");
+      }
+
+      const promptsApiUrl = `${baseUrl}/api/prompts`;
+      const customInstructionsApiUrl = `${baseUrl}/api/custom-instructions`; // This endpoint should return full instruction data
+
+      // Fetch both standard prompts and custom instructions concurrently
+      const [promptsResponse, customInstructionsResponse] = await Promise.all([
+        axios.get<z.infer<typeof ListPromptsResultSchema>["prompts"]>(promptsApiUrl, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 10000,
+        }),
+        // API should return: [{ name: string, description: string, instruction: string (JSON), _serverUuid: string }]
+        axios.get<z.infer<typeof ListPromptsResultSchema>["prompts"]>(customInstructionsApiUrl, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 10000,
+        })
+      ]);
+
+      const standardPrompts = promptsResponse.data || [];
+      const customInstructionsAsPrompts = customInstructionsResponse.data || [];
+
+      // Clear previous instruction mapping and populate with new data
+      Object.keys(instructionToServerMap).forEach(key => delete instructionToServerMap[key]); // Clear map
+      
+      // Store the full instruction data from API
+      // The API should return objects with: name, description, instruction (JSON content), _serverUuid
+      customInstructionsAsPrompts.forEach(instr => {
+        if (instr.name) {
+          // Store the entire instruction object for later retrieval
+          instructionToServerMap[instr.name] = instr;
+        } else {
+            debugError(`[ListPrompts Handler] Missing name for custom instruction:`, instr);
+        }
+      });
+
+      // Merge the results (Remove internal _serverUuid from custom instructions before sending to client)
+      const allPrompts = [
+          proxyCapabilitiesStaticPrompt, // Add static proxy capabilities prompt
+          ...standardPrompts,
+          ...customInstructionsAsPrompts.map(({ _serverUuid, ...rest }) => rest)
+      ];
+
+      // Wrap the combined array in the expected structure for the MCP response
+      // Note: Pagination not handled here
+      return { prompts: allPrompts, nextCursor: undefined };
+
+    } catch (error: any) {
+      const errorMessage = axios.isAxiosError(error)
+        ? `API Error (${error.response?.status}): ${error.message}`
+        : error instanceof Error
+        ? error.message
+        : "Unknown error fetching prompts or custom instructions from API";
+      debugError("[ListPrompts Handler Error]", errorMessage);
+      // Let SDK handle error formatting
+      throw new Error(`Failed to list prompts: ${errorMessage}`);
+    }
+  });
+
+
+  // List Resources Handler - Fetches aggregated list from Pluggedin App API
+  server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
+    try {
+      const apiKey = getPluggedinMCPApiKey();
+      const baseUrl = getPluggedinMCPApiBaseUrl();
+      if (!apiKey || !baseUrl) {
+        throw new Error("Pluggedin API Key or Base URL is not configured.");
+      }
+
+      const apiUrl = `${baseUrl}/api/resources`; // Assuming this is the correct endpoint
+
+      // debugError(`[Proxy - ListResources] Fetching from ${apiUrl}`); // Debug log
+
+      const response = await axios.get<z.infer<typeof ListResourcesResultSchema>["resources"]>(apiUrl, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        timeout: 10000, // Add a timeout for the API call (e.g., 10 seconds)
+      });
+
+      // The API currently returns just the array, wrap it in the expected structure
+      const resources = response.data || [];
+
+      // debugError(`[Proxy - ListResources] Received ${resources.length} resources from API.`); // Debug log
+
+      // Note: Pagination across servers via the API is not implemented here.
+      // The API would need to support cursor-based pagination for this to work fully.
+      return { resources: resources, nextCursor: undefined };
+
+    } catch (error: any) {
+      const errorMessage = axios.isAxiosError(error)
+        ? `API Error (${error.response?.status}): ${error.message}`
+        : error instanceof Error
+        ? error.message
+        : "Unknown error fetching resources from API";
+      debugError("[ListResources Handler Error]", errorMessage);
+      // Let SDK handle error formatting
+      throw new Error(`Failed to list resources: ${errorMessage}`);
+    }
+  });
+
+  // Read Resource Handler - Simplified to only proxy
+  // WARNING: This handler will likely fail now because resourceToClient is no longer populated.
+  // It needs to be refactored to proxy the read request to the correct downstream server,
+  // potentially by calling a new API endpoint on pluggedin-app or by re-establishing a session.
+  // Refactored Read Resource Handler - Uses API to resolve URI to server details
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    const meta = request.params._meta; // Pass meta along
+
+    try {
+        const apiKey = getPluggedinMCPApiKey();
+        const baseUrl = getPluggedinMCPApiBaseUrl();
+        if (!apiKey || !baseUrl) {
+            throw new Error("Pluggedin API Key or Base URL is not configured for resource resolution.");
+        }
+
+        // 1. Call the new API endpoint to resolve the URI
+        const resolveApiUrl = `${baseUrl}/api/resolve/resource?uri=${encodeURIComponent(uri)}`;
+        // debugError(`[ReadResource Handler] Resolving URI via: ${resolveApiUrl}`); // Optional debug log
+
+        const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, { // Expect ServerParameters type
+            headers: { Authorization: `Bearer ${apiKey}` },
+            timeout: 10000, // Timeout for resolution call
+        });
+
+        const serverParams = resolveResponse.data;
+        if (!serverParams || !serverParams.uuid) {
+            throw new Error(`Could not resolve server details for URI: ${uri}`);
+        }
+
+        // 2. Get the downstream server session using resolved details
+        const sessionKey = getSessionKey(serverParams.uuid, serverParams);
+        // Ensure session is established before proceeding
+        const session = await getSession(sessionKey, serverParams.uuid, serverParams);
+
+        if (!session) {
+            // Attempt to re-initialize sessions if not found (might happen on proxy restart)
+            // This is a potential area for improvement (e.g., caching serverParams)
+            debugError(`[ReadResource Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
+            await initSessions(); // Re-initialize all sessions
+            const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
+            if (!refreshedSession) {
+               throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling URI: ${uri}`);
+            }
+             // Use the refreshed session
+             debugError(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
+             const timer = createExecutionTimer();
+             
+             try {
+               const result = await refreshedSession.client.request(
+                   { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
+                   ReadResourceResultSchema
+               );
+               
+               // Log successful resource read
+               logMcpActivity({
+                 action: 'resource_read',
+                 serverName: serverParams.name || serverParams.uuid,
+                 serverUuid: serverParams.uuid,
+                 itemName: uri,
+                 success: true,
+                 executionTime: timer.stop(),
+               }).catch(() => {}); // Ignore notification errors
+               
+               return result;
+             } catch (resourceError) {
+               // Log failed resource read
+               logMcpActivity({
+                 action: 'resource_read',
+                 serverName: serverParams.name || serverParams.uuid,
+                 serverUuid: serverParams.uuid,
+                 itemName: uri,
+                 success: false,
+                 errorMessage: resourceError instanceof Error ? resourceError.message : String(resourceError),
+                 executionTime: timer.stop(),
+               }).catch(() => {}); // Ignore notification errors
+               
+               throw resourceError;
+             }
+        } else {
+             // Use the existing session
+             debugError(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
+             const timer = createExecutionTimer();
+             
+             try {
+               const result = await session.client.request(
+                   { method: "resources/read", params: { uri, _meta: meta } }, // Pass original URI and meta
+                   ReadResourceResultSchema
+               );
+               
+               // Log successful resource read
+               logMcpActivity({
+                 action: 'resource_read',
+                 serverName: serverParams.name || serverParams.uuid,
+                 serverUuid: serverParams.uuid,
+                 itemName: uri,
+                 success: true,
+                 executionTime: timer.stop(),
+               }).catch(() => {}); // Ignore notification errors
+               
+               return result;
+             } catch (resourceError) {
+               // Log failed resource read
+               logMcpActivity({
+                 action: 'resource_read',
+                 serverName: serverParams.name || serverParams.uuid,
+                 serverUuid: serverParams.uuid,
+                 itemName: uri,
+                 success: false,
+                 errorMessage: resourceError instanceof Error ? resourceError.message : String(resourceError),
+                 executionTime: timer.stop(),
+               }).catch(() => {}); // Ignore notification errors
+               
+               throw resourceError;
+             }
+        }
+
+    } catch (error: any) {
+        const errorMessage = axios.isAxiosError(error)
+            ? `API Error (${error.response?.status}) resolving URI ${uri}: ${error.response?.data?.error || error.message}`
+            : error instanceof Error
+            ? error.message
+            : `Unknown error reading resource URI: ${uri}`;
+        debugError("[ReadResource Handler Error]", errorMessage);
+        // Let SDK handle error formatting
+        throw new Error(`Failed to read resource ${uri}: ${errorMessage}`);
+    }
+  });
+
+  // List Resource Templates Handler - Fetches aggregated list from Pluggedin App API
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request) => {
+    try {
+      const apiKey = getPluggedinMCPApiKey();
+      const baseUrl = getPluggedinMCPApiBaseUrl();
+      if (!apiKey || !baseUrl) {
+        throw new Error("Pluggedin API Key or Base URL is not configured.");
+      }
+
+      const apiUrl = `${baseUrl}/api/resource-templates`; // New endpoint
+
+      // debugError(`[Proxy - ListResourceTemplates] Fetching from ${apiUrl}`); // Debug log
+
+      // Fetch the list of templates
+      // Assuming the API returns ResourceTemplate[] directly
+      const response = await axios.get<ResourceTemplate[]>(apiUrl, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+        timeout: 10000, // Add a timeout
+      });
+
+      const templates = response.data || [];
+
+      // debugError(`[Proxy - ListResourceTemplates] Received ${templates.length} templates from API.`); // Debug log
+
+      // Wrap the array in the expected structure for the MCP response
+      return { resourceTemplates: templates, nextCursor: undefined }; // Pagination not handled
+
+    } catch (error: any) {
+      const errorMessage = axios.isAxiosError(error)
+        ? `API Error (${error.response?.status}): ${error.message}`
+        : error instanceof Error
+        ? error.message
+        : "Unknown error fetching resource templates from API";
+      debugError("[ListResourceTemplates Handler Error]", errorMessage);
+      // Let SDK handle error formatting
+      throw new Error(`Failed to list resource templates: ${errorMessage}`);
+    }
+  });
+
+  // Ping Handler - Responds to simple ping requests
+  server.setRequestHandler(PingRequestSchema, async (request) => {
+    debugError("[Ping Handler] Received ping request.");
+    
+    // Basic health information
+    const healthInfo = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      version: packageJson.version,
+      sessions: Object.keys(toolToServerMap).length,
+      memory: process.memoryUsage(),
+      uptime: process.uptime()
+    };
+    
+    debugLog("[Ping Handler] Health check:", healthInfo);
+    
+    // Return empty object for MCP spec compliance, but log health info
+    return {};
+  });
+
+  const cleanup = async () => {
+    try {
+      // Clean up sessions
+      await cleanupAllSessions();
+      
+      // Clear tool mappings
+      Object.keys(toolToServerMap).forEach(key => delete toolToServerMap[key]);
+      Object.keys(instructionToServerMap).forEach(key => delete instructionToServerMap[key]);
+      
+      // Reset rate limiters
+      toolCallRateLimiter.reset();
+      apiCallRateLimiter.reset();
+      
+      debugLog("[Proxy Cleanup] All resources cleaned up successfully");
+    } catch (error) {
+      debugError("[Proxy Cleanup] Error during cleanup:", error);
+    }
+  };
+
+  return { server, cleanup };
+};
