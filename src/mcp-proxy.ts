@@ -16,8 +16,8 @@ import {
   ResourceTemplate,
   CompatibilityCallToolResultSchema,
   GetPromptResultSchema,
-  PromptMessage, // Import PromptMessage
-  PingRequestSchema, // Import PingRequestSchema
+  PromptMessage,
+  PingRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { getMcpServers } from "./fetch-pluggedinmcp.js";
@@ -25,13 +25,10 @@ import { getSessionKey, sanitizeName, isDebugEnabled, getPluggedinMCPApiKey, get
 import { cleanupAllSessions, getSession, initSessions } from "./sessions.js";
 import { ConnectedClient } from "./client.js";
 import axios from "axios";
-// Removed unused imports
-// import { GetPluggedinToolsTool } from "./tools/get-pluggedin-tools.js"; // No longer needed?
-// import { CallPluggedinToolTool } from "./tools/call-pluggedin-tool.js"; // No longer needed?
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { readFileSync } from 'fs';
 import { createRequire } from 'module';
-import { ToolExecutionResult, ServerParameters } from "./types.js"; // Import ServerParameters
+import { ToolExecutionResult, ServerParameters } from "./types.js";
 import { logMcpActivity, createExecutionTimer } from "./notification-logger.js";
 import { 
   RateLimiter, 
@@ -41,15 +38,31 @@ import {
   withTimeout
 } from "./security-utils.js";
 import { debugLog, debugError } from "./debug-log.js";
-// Removed incorrect McpMessage import
+import {
+  createDocumentStaticTool,
+  listDocumentsStaticTool,
+  searchDocumentsStaticTool,
+  getDocumentStaticTool,
+  updateDocumentStaticTool
+} from "./tools/static-tools.js";
+import { StaticToolHandlers } from "./handlers/static-handlers.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
 
 // Map to store prefixed tool name -> { originalName, serverUuid }
 const toolToServerMap: Record<string, { originalName: string; serverUuid: string; }> = {};
-// Map to store custom instruction name -> serverUuid
-const instructionToServerMap: Record<string, string> = {};
+
+// Interface for instruction data from API
+interface InstructionData {
+  description?: string;
+  instruction?: string | any; // Can be string (JSON) or parsed object
+  serverUuid?: string;
+  _serverUuid?: string;
+}
+
+// Map to store custom instruction name -> instruction content
+const instructionToServerMap: Record<string, InstructionData> = {};
 
 // Define the static discovery tool schema using Zod
 const DiscoverToolsInputSchema = z.object({
@@ -188,7 +201,6 @@ const DeleteNotificationInputSchema = z.object({
   notificationId: z.string().min(1, "Notification ID cannot be empty"),
 });
 
-// Removed old static tool instances (getToolsInstance, callToolInstance) as they are superseded by API fetching
 
 // Define the static prompt for proxy capabilities
 const proxyCapabilitiesStaticPrompt = {
@@ -278,7 +290,6 @@ export const createServer = async () => {
        });
 
        // Prepare the response payload according to MCP spec { tools: Tool[] }
-       // Remove the internal _serverUuid and _serverName before sending to client
        const toolsForClient: Tool[] = fetchedTools.map(({ _serverUuid, _serverName, ...rest }) => rest);
 
        // Note: Pagination not handled here, assumes API returns all tools
@@ -286,7 +297,12 @@ export const createServer = async () => {
        // Always include the static tools
        const allToolsForClient = [
          discoverToolsStaticTool, 
-         ragQueryStaticTool, 
+         ragQueryStaticTool,
+         createDocumentStaticTool,
+         listDocumentsStaticTool,
+         searchDocumentsStaticTool,
+         getDocumentStaticTool,
+         updateDocumentStaticTool,
          sendNotificationStaticTool,
          listNotificationsStaticTool,
          markNotificationReadStaticTool,
@@ -303,7 +319,7 @@ export const createServer = async () => {
          // Only include status code, not full error details
          sanitizedError = `Failed to list tools (HTTP ${error.response.status})`;
        }
-       debugError("[ListTools Handler Error]", error); // Log full error internally
+       debugError("[ListTools Handler Error]", error);
        throw new Error(sanitizedError);
      }
   });
@@ -331,7 +347,6 @@ export const createServer = async () => {
     try {
         // Handle static discovery tool first
         if (requestedToolName === discoverToolsStaticTool.name) {
-            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = DiscoverToolsInputSchema.parse(args ?? {}); // Validate args
             const { server_uuid, force_refresh } = validatedArgs;
 
@@ -467,7 +482,6 @@ export const createServer = async () => {
                     }
                 } catch (cacheError: any) {
                     // Error checking cache, show static tools and proceed with discovery
-                    debugError(`[Discovery Cache Check] Error checking for existing data: ${cacheError.message}`);
                     
                     // Show static tools even when cache check fails
                     const staticToolsCount = 3;
@@ -528,7 +542,6 @@ export const createServer = async () => {
                             headers: { Authorization: `Bearer ${apiKey}` },
                             timeout: 60000, // 60s timeout for background discovery
                         }).catch((bgError) => {
-                            debugError(`[Background Discovery] Failed: ${bgError.message}`);
                         });
 
                         // Get current cached data to show immediately
@@ -723,7 +736,6 @@ export const createServer = async () => {
 
         // Handle static RAG query tool
         if (requestedToolName === ragQueryStaticTool.name) {
-            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = RagQueryInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
@@ -789,7 +801,6 @@ export const createServer = async () => {
 
         // Handle static send notification tool
         if (requestedToolName === sendNotificationStaticTool.name) {
-            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = SendNotificationInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
@@ -858,7 +869,6 @@ export const createServer = async () => {
 
         // Handle static list notifications tool
         if (requestedToolName === listNotificationsStaticTool.name) {
-            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = ListNotificationsInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
@@ -952,7 +962,6 @@ export const createServer = async () => {
 
         // Handle static mark notification as read tool
         if (requestedToolName === markNotificationReadStaticTool.name) {
-            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = MarkNotificationReadInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
@@ -1017,7 +1026,6 @@ export const createServer = async () => {
 
         // Handle static delete notification tool
         if (requestedToolName === deleteNotificationStaticTool.name) {
-            debugError(`[CallTool Handler] Executing static tool: ${requestedToolName}`);
             const validatedArgs = DeleteNotificationInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
@@ -1080,6 +1088,23 @@ export const createServer = async () => {
             }
         }
 
+        // Handle document tools using StaticToolHandlers
+        const staticHandlers = new StaticToolHandlers(toolToServerMap, instructionToServerMap);
+        const documentTools = [
+            createDocumentStaticTool.name,
+            listDocumentsStaticTool.name,
+            searchDocumentsStaticTool.name,
+            getDocumentStaticTool.name,
+            updateDocumentStaticTool.name
+        ];
+        
+        if (documentTools.includes(requestedToolName)) {
+            const result = await staticHandlers.handleStaticTool(requestedToolName, args);
+            if (result) {
+                return result;
+            }
+        }
+
         // Look up the downstream tool in our map
         const toolInfo = toolToServerMap[requestedToolName];
         if (!toolInfo) {
@@ -1108,7 +1133,6 @@ export const createServer = async () => {
         }
 
         // Proxy the call to the downstream server using the original tool name
-        debugError(`[CallTool Proxy] Calling tool '${originalName}' on server ${serverUuid}`);
         const timer = createExecutionTimer();
         
         try {
@@ -1295,46 +1319,115 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       if (name.startsWith(instructionPrefix)) {
         // --- Handle Custom Instruction Request ---
-        debugError(`[GetPrompt Handler] Detected custom instruction prefix for: ${name}`);
-        const serverUuid = instructionToServerMap[name];
-        debugError(`[GetPrompt Handler] Looked up serverUuid from instructionToServerMap: ${serverUuid}`); // Log UUID lookup
-        if (!serverUuid) {
-           debugError(`[GetPrompt Handler] Current instructionToServerMap:`, JSON.stringify(instructionToServerMap)); // Log the map content
-          throw new Error(`Server UUID not found in map for custom instruction: ${name}. Try listing prompts again.`);
+        const instructionData = instructionToServerMap[name];
+        if (!instructionData) {
+          throw new Error(`Custom instruction not found in map: ${name}. Try listing prompts again.`);
         }
-
-        // Call the new app API endpoint to get instruction details
-        // This endpoint needs to be created: /api/custom-instructions/[uuid]
-        const instructionApiUrl = `${baseUrl}/api/custom-instructions/${serverUuid}`;
-        debugError(`[GetPrompt Handler] Fetching instruction details from: ${instructionApiUrl}`);
 
         const timer = createExecutionTimer();
         
         try {
-          // Expecting the API to return { messages: PromptMessage[] }
-          const response = await axios.get<{ messages: PromptMessage[] }>(instructionApiUrl, {
-            headers: { Authorization: `Bearer ${apiKey}` },
-            timeout: 10000,
-          });
-
-          const instructionData = response.data;
-          if (!instructionData || !Array.isArray(instructionData.messages)) {
-             throw new Error(`Invalid response format from ${instructionApiUrl}`);
+          // Custom instructions from the API should have an instruction field
+          const messages: PromptMessage[] = [];
+          
+          // First check if there's an instruction field (the actual content)
+          if (instructionData.instruction) {
+            
+            // Parse the instruction content - it should be a JSON array
+            try {
+              const parsedInstruction = typeof instructionData.instruction === 'string' 
+                ? JSON.parse(instructionData.instruction)
+                : instructionData.instruction;
+                
+              if (Array.isArray(parsedInstruction)) {
+                for (const msg of parsedInstruction) {
+                  if (msg.role === "system") {
+                    // Convert system messages to user messages with a prefix
+                    messages.push({
+                      role: "user",
+                      content: {
+                        type: "text",
+                        text: `System: ${msg.content}`
+                      }
+                    });
+                  } else if (msg.role === "user" || msg.role === "assistant") {
+                    // Keep user and assistant messages as-is
+                    messages.push({
+                      role: msg.role,
+                      content: {
+                        type: "text",
+                        text: msg.content
+                      }
+                    });
+                  }
+                }
+              } else {
+                // If not an array, use as a single message
+                messages.push({
+                  role: "assistant",
+                  content: {
+                    type: "text",
+                    text: String(parsedInstruction)
+                  }
+                });
+              }
+            } catch (parseError) {
+              // Log the parse error for debugging
+              debugError(`[GetPrompt Handler] Failed to parse instruction for ${name}:`, parseError);
+              
+              // Return a clear warning message about the parsing failure
+              // Convert system message to user message with prefix
+              messages.push({
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `System: Warning: Unable to parse instruction from API. The instruction data may be malformed. Raw value: ${JSON.stringify(instructionData.instruction).substring(0, 200)}...`
+                }
+              });
+              
+              // Include the raw instruction as fallback
+              messages.push({
+                role: "assistant",
+                content: {
+                  type: "text",
+                  text: typeof instructionData.instruction === 'string' 
+                    ? instructionData.instruction 
+                    : JSON.stringify(instructionData.instruction)
+                }
+              });
+            }
+          } else if (instructionData.description) {
+            // Fallback to description if no instruction field
+            messages.push({
+              role: "assistant",
+              content: {
+                type: "text",
+                text: instructionData.description
+              }
+            });
+          } else {
+            messages.push({
+              role: "assistant",
+              content: {
+                type: "text",
+                text: "No instruction content available"
+              }
+            });
           }
 
           // Log successful custom instruction retrieval
           logMcpActivity({
             action: 'prompt_get',
             serverName: 'Custom Instructions',
-            serverUuid,
+            serverUuid: instructionData._serverUuid || 'unknown',
             itemName: name,
             success: true,
             executionTime: timer.stop(),
           }).catch(() => {}); // Ignore notification errors
 
-          // Construct the GetPromptResult directly in the proxy
+          // Return the formatted messages
           return {
-            messages: instructionData.messages,
+            messages: messages,
           } as z.infer<typeof GetPromptResultSchema>; // Ensure correct type
 
         } catch (apiError: any) {
@@ -1346,7 +1439,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
            logMcpActivity({
              action: 'prompt_get',
              serverName: 'Custom Instructions',
-             serverUuid,
+             serverUuid: instructionData?._serverUuid || 'unknown',
              itemName: name,
              success: false,
              errorMessage: errorMsg,
@@ -1358,10 +1451,8 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       } else {
         // --- Handle Standard Prompt Request (Existing Logic) ---
-        debugError(`[GetPrompt Handler] No custom instruction prefix detected for: ${name}. Proceeding with standard prompt resolution.`);
         // 1. Call the resolve API endpoint to find which server has this prompt
         const resolveApiUrl = `${baseUrl}/api/resolve/prompt?name=${encodeURIComponent(name)}`;
-         debugError(`[GetPrompt Handler] Calling resolve API: ${resolveApiUrl}`); // Log API call
         const resolveResponse = await axios.get<{uuid: string}>(resolveApiUrl, {
           headers: { Authorization: `Bearer ${apiKey}` },
           timeout: 10000,
@@ -1385,14 +1476,12 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
         const session = await getSession(sessionKey, serverParams.uuid, serverParams);
 
         if (!session) {
-          debugError(`[GetPrompt Handler] Session not found for ${serverParams.uuid}, attempting re-init...`);
           await initSessions();
           const refreshedSession = await getSession(sessionKey, serverParams.uuid, serverParams);
           if (!refreshedSession) {
             throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling prompt: ${name}`);
           }
           // Use the refreshed session
-          debugError(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
           const timer = createExecutionTimer();
           
           try {
@@ -1428,7 +1517,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
           }
         } else {
           // Use the existing session
-          debugError(`[GetPrompt Handler] Proxying get request for prompt '${name}' to server ${serverParams.name || serverParams.uuid}`);
           const timer = createExecutionTimer();
           
           try {
@@ -1485,7 +1573,7 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
       }
 
       const promptsApiUrl = `${baseUrl}/api/prompts`;
-      const customInstructionsApiUrl = `${baseUrl}/api/custom-instructions`; // New endpoint for custom instructions
+      const customInstructionsApiUrl = `${baseUrl}/api/custom-instructions`; // This endpoint should return full instruction data
 
       // Fetch both standard prompts and custom instructions concurrently
       const [promptsResponse, customInstructionsResponse] = await Promise.all([
@@ -1493,7 +1581,8 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
           headers: { Authorization: `Bearer ${apiKey}` },
           timeout: 10000,
         }),
-        axios.get<z.infer<typeof ListPromptsResultSchema>["prompts"]>(customInstructionsApiUrl, { // Assuming custom instructions API returns the same format
+        // API should return: [{ name: string, description: string, instruction: string (JSON), _serverUuid: string }]
+        axios.get<z.infer<typeof ListPromptsResultSchema>["prompts"]>(customInstructionsApiUrl, {
           headers: { Authorization: `Bearer ${apiKey}` },
           timeout: 10000,
         })
@@ -1504,12 +1593,15 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       // Clear previous instruction mapping and populate with new data
       Object.keys(instructionToServerMap).forEach(key => delete instructionToServerMap[key]); // Clear map
+      
+      // Store the full instruction data from API
+      // The API should return objects with: name, description, instruction (JSON content), _serverUuid
       customInstructionsAsPrompts.forEach(instr => {
-        if (instr.name && instr._serverUuid) {
-          // Assert _serverUuid as string since the check ensures it's not undefined
-          instructionToServerMap[instr.name] = instr._serverUuid as string;
+        if (instr.name) {
+          // Store the entire instruction object for later retrieval
+          instructionToServerMap[instr.name] = instr;
         } else {
-            debugError(`[ListPrompts Handler] Missing name or _serverUuid for custom instruction:`, instr);
+            debugError(`[ListPrompts Handler] Missing name for custom instruction:`, instr);
         }
       });
 
@@ -1548,7 +1640,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       const apiUrl = `${baseUrl}/api/resources`; // Assuming this is the correct endpoint
 
-      // debugError(`[Proxy - ListResources] Fetching from ${apiUrl}`); // Debug log
 
       const response = await axios.get<z.infer<typeof ListResourcesResultSchema>["resources"]>(apiUrl, {
         headers: {
@@ -1560,7 +1651,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
       // The API currently returns just the array, wrap it in the expected structure
       const resources = response.data || [];
 
-      // debugError(`[Proxy - ListResources] Received ${resources.length} resources from API.`); // Debug log
 
       // Note: Pagination across servers via the API is not implemented here.
       // The API would need to support cursor-based pagination for this to work fully.
@@ -1596,7 +1686,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
         // 1. Call the new API endpoint to resolve the URI
         const resolveApiUrl = `${baseUrl}/api/resolve/resource?uri=${encodeURIComponent(uri)}`;
-        // debugError(`[ReadResource Handler] Resolving URI via: ${resolveApiUrl}`); // Optional debug log
 
         const resolveResponse = await axios.get<ServerParameters>(resolveApiUrl, { // Expect ServerParameters type
             headers: { Authorization: `Bearer ${apiKey}` },
@@ -1623,7 +1712,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
                throw new Error(`Session could not be established for server UUID: ${serverParams.uuid} handling URI: ${uri}`);
             }
              // Use the refreshed session
-             debugError(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
              const timer = createExecutionTimer();
              
              try {
@@ -1659,7 +1747,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
              }
         } else {
              // Use the existing session
-             debugError(`[ReadResource Handler] Proxying read request for URI '${uri}' to server ${serverParams.name || serverParams.uuid}`);
              const timer = createExecutionTimer();
              
              try {
@@ -1718,7 +1805,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       const apiUrl = `${baseUrl}/api/resource-templates`; // New endpoint
 
-      // debugError(`[Proxy - ListResourceTemplates] Fetching from ${apiUrl}`); // Debug log
 
       // Fetch the list of templates
       // Assuming the API returns ResourceTemplate[] directly
@@ -1731,7 +1817,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
       const templates = response.data || [];
 
-      // debugError(`[Proxy - ListResourceTemplates] Received ${templates.length} templates from API.`); // Debug log
 
       // Wrap the array in the expected structure for the MCP response
       return { resourceTemplates: templates, nextCursor: undefined }; // Pagination not handled
@@ -1750,7 +1835,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
 
   // Ping Handler - Responds to simple ping requests
   server.setRequestHandler(PingRequestSchema, async (request) => {
-    debugError("[Ping Handler] Received ping request.");
     
     // Basic health information
     const healthInfo = {
@@ -1762,7 +1846,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
       uptime: process.uptime()
     };
     
-    debugLog("[Ping Handler] Health check:", healthInfo);
     
     // Return empty object for MCP spec compliance, but log health info
     return {};
@@ -1781,7 +1864,6 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
       toolCallRateLimiter.reset();
       apiCallRateLimiter.reset();
       
-      debugLog("[Proxy Cleanup] All resources cleaned up successfully");
     } catch (error) {
       debugError("[Proxy Cleanup] Error during cleanup:", error);
     }

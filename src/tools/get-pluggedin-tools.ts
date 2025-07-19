@@ -121,8 +121,22 @@ export class GetPluggedinToolsTool {
         }
       );
 
+      let toolsFromApi: Array<{
+        name: string;
+        mcp_server_uuid?: string;
+        _serverUuid?: string;
+        description?: string | null;
+        toolSchema?: any;
+        status?: string;
+      }> = [];
+
       // Check if the response structure is as expected
-      if (!response.data || !Array.isArray(response.data.results)) {
+      if (response.data && response.data.tools && Array.isArray(response.data.tools)) {
+        toolsFromApi = response.data.tools;
+      } else if (response.data && Array.isArray(response.data)) {
+        // Some APIs return the array directly
+        toolsFromApi = response.data;
+      } else {
         // logger.error("Invalid response structure received from /api/tools:", response.data); // Removed logging
         // Return error structure matching ToolExecutionResult
         return {
@@ -130,6 +144,11 @@ export class GetPluggedinToolsTool {
           content: [{ type: "text", text: "Error: Invalid response from API." }],
         };
       }
+      
+      // Validate each tool object to ensure it has at least a 'name' property of type string
+      toolsFromApi = toolsFromApi.filter(
+        (tool) => tool && typeof tool.name === "string"
+      );
 
       // The API returns tool objects, we need to extract the names
       // Assuming the API returns objects with a 'name' and 'mcp_server_uuid'
@@ -139,21 +158,12 @@ export class GetPluggedinToolsTool {
       const serverNames = await _fetchServerNames(apiBaseUrl, apiKey);
       const sanitize = (name: string) => name.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
 
-      // Define the expected structure from the API based on the previous change
-      const toolsFromApi: Array<{
-        name: string;
-        mcp_server_uuid: string;
-        description?: string | null; // Allow null description
-        toolSchema?: any; // JSON schema object
-        status: string; // Assuming status is returned
-      }> = response.data.results;
-
       // Build a flattened tool object without server prefixes
       const flattenedTools: Record<string, any> = {};
 
       toolsFromApi.forEach(tool => {
         // Store the server UUID in a hidden field for the tool_call function to use
-        const serverUuid = tool.mcp_server_uuid;
+        const serverUuid = tool.mcp_server_uuid || tool._serverUuid;
         
         // Use just the tool name as the key without any server prefix
         flattenedTools[tool.name] = {

@@ -121,11 +121,8 @@ async function main() {
     process.on("SIGTERM", handleExit);
 
   } catch (error) {
-    // Catch errors during startup
-    if (options.transport === 'streamable-http') {
-      console.error("Error during startup:", error);
-    }
-    process.exit(1); // Exit if startup fails
+    // Exit if startup fails
+    process.exit(1);
   }
 }
 

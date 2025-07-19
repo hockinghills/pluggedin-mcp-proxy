@@ -44,6 +44,12 @@ export const getSession = async (
     }
 
     _sessions[sessionKey] = newClient;
+    
+    // Maintain global.sessions
+    if (!(global as any).sessions) {
+      (global as any).sessions = {};
+    }
+    (global as any).sessions[sessionKey] = newClient;
 
     return newClient;
   }
@@ -70,6 +76,11 @@ export const cleanupAllSessions = async (): Promise<void> => {
     Object.entries(_sessions).map(async ([sessionKey, session]) => {
       await session.cleanup();
       delete _sessions[sessionKey];
+      
+      // Clean up from global.sessions
+      if ((global as any).sessions && (global as any).sessions[sessionKey]) {
+        delete (global as any).sessions[sessionKey];
+      }
     })
   );
 };
