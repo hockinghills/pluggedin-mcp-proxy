@@ -70,7 +70,7 @@ export const ListDocumentsInputSchema = z.object({
     category: z.enum(["report", "analysis", "documentation", "guide", "research", "code", "other"]).optional(),
     searchQuery: z.string().optional(),
   }).optional(),
-  sort: z.enum(["created_desc", "created_asc", "updated_desc", "updated_asc", "title_asc", "title_desc"]).default("created_desc"),
+  sort: z.enum(["date_desc", "date_asc", "title", "size"]).default("date_desc"),
   limit: z.number().int().min(1).max(100).default(20),
   offset: z.number().int().min(0).default(0),
 });

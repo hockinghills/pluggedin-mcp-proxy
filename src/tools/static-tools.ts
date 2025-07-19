@@ -267,9 +267,9 @@ export const listDocumentsStaticTool: Tool = {
       },
       sort: {
         type: "string",
-        enum: ["created_desc", "created_asc", "updated_desc", "updated_asc", "title_asc", "title_desc"],
+        enum: ["date_desc", "date_asc", "title", "size"],
         description: "Sort order",
-        default: "created_desc"
+        default: "date_desc"
       },
       limit: {
         type: "integer",

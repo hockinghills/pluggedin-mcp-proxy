@@ -38,6 +38,14 @@ import {
   withTimeout
 } from "./security-utils.js";
 import { debugLog, debugError } from "./debug-log.js";
+import {
+  createDocumentStaticTool,
+  listDocumentsStaticTool,
+  searchDocumentsStaticTool,
+  getDocumentStaticTool,
+  updateDocumentStaticTool
+} from "./tools/static-tools.js";
+import { StaticToolHandlers } from "./handlers/static-handlers.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
@@ -280,7 +288,12 @@ export const createServer = async () => {
        // Always include the static tools
        const allToolsForClient = [
          discoverToolsStaticTool, 
-         ragQueryStaticTool, 
+         ragQueryStaticTool,
+         createDocumentStaticTool,
+         listDocumentsStaticTool,
+         searchDocumentsStaticTool,
+         getDocumentStaticTool,
+         updateDocumentStaticTool,
          sendNotificationStaticTool,
          listNotificationsStaticTool,
          markNotificationReadStaticTool,
@@ -1063,6 +1076,23 @@ export const createServer = async () => {
                      }
                  }
                  throw new Error(errorMsg);
+            }
+        }
+
+        // Handle document tools using StaticToolHandlers
+        const staticHandlers = new StaticToolHandlers(toolToServerMap, instructionToServerMap);
+        const documentTools = [
+            createDocumentStaticTool.name,
+            listDocumentsStaticTool.name,
+            searchDocumentsStaticTool.name,
+            getDocumentStaticTool.name,
+            updateDocumentStaticTool.name
+        ];
+        
+        if (documentTools.includes(requestedToolName)) {
+            const result = await staticHandlers.handleStaticTool(requestedToolName, args);
+            if (result) {
+                return result;
             }
         }
 
