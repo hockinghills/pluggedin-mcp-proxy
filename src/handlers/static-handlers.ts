@@ -43,6 +43,14 @@ import {
 // Type for tool to server mapping
 export type ToolToServerMap = Record<string, { originalName: string; serverUuid: string; }>;
 
+// Interface for instruction data from API
+interface InstructionData {
+  description?: string;
+  instruction?: string | any; // Can be string (JSON) or parsed object
+  serverUuid?: string;
+  _serverUuid?: string;
+}
+
 /**
  * Handles execution of static tools that are built into the Plugged.in MCP proxy.
  * These tools provide core functionality like discovery, RAG queries, notifications, and document management.
@@ -50,7 +58,7 @@ export type ToolToServerMap = Record<string, { originalName: string; serverUuid:
 export class StaticToolHandlers {
   constructor(
     private toolToServerMap: ToolToServerMap,
-    private instructionToServerMap: Record<string, string>
+    private instructionToServerMap: Record<string, InstructionData>
   ) {}
 
   async handleSetup(args: any): Promise<ToolExecutionResult> {

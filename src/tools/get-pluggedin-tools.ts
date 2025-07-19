@@ -144,6 +144,11 @@ export class GetPluggedinToolsTool {
           content: [{ type: "text", text: "Error: Invalid response from API." }],
         };
       }
+      
+      // Validate each tool object to ensure it has at least a 'name' property of type string
+      toolsFromApi = toolsFromApi.filter(
+        (tool) => tool && typeof tool.name === "string"
+      );
 
       // The API returns tool objects, we need to extract the names
       // Assuming the API returns objects with a 'name' and 'mcp_server_uuid'

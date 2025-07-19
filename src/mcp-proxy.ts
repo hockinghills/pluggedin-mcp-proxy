@@ -52,8 +52,17 @@ const packageJson = require('../package.json');
 
 // Map to store prefixed tool name -> { originalName, serverUuid }
 const toolToServerMap: Record<string, { originalName: string; serverUuid: string; }> = {};
+
+// Interface for instruction data from API
+interface InstructionData {
+  description?: string;
+  instruction?: string | any; // Can be string (JSON) or parsed object
+  serverUuid?: string;
+  _serverUuid?: string;
+}
+
 // Map to store custom instruction name -> instruction content
-const instructionToServerMap: Record<string, any> = {};
+const instructionToServerMap: Record<string, InstructionData> = {};
 
 // Define the static discovery tool schema using Zod
 const DiscoverToolsInputSchema = z.object({
@@ -1363,12 +1372,27 @@ The proxy acts as a unified gateway to all your MCP capabilities while providing
                 });
               }
             } catch (parseError) {
-              // If parsing fails, use the instruction as-is
+              // Log the parse error for debugging
+              debugError(`[GetPrompt Handler] Failed to parse instruction for ${name}:`, parseError);
+              
+              // Return a clear warning message about the parsing failure
+              // Convert system message to user message with prefix
+              messages.push({
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `System: Warning: Unable to parse instruction from API. The instruction data may be malformed. Raw value: ${JSON.stringify(instructionData.instruction).substring(0, 200)}...`
+                }
+              });
+              
+              // Include the raw instruction as fallback
               messages.push({
                 role: "assistant",
                 content: {
                   type: "text",
-                  text: instructionData.instruction
+                  text: typeof instructionData.instruction === 'string' 
+                    ? instructionData.instruction 
+                    : JSON.stringify(instructionData.instruction)
                 }
               });
             }
