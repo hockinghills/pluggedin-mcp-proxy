@@ -28,13 +28,32 @@ This proxy enables seamless integration with any MCP client (Claude, Cline, Curs
 - **Multi-Server Support**: Connect to STDIO, SSE, and Streamable HTTP MCP servers
 - **Dual Transport Modes**: Run proxy as STDIO (default) or Streamable HTTP server
 - **Unified Document Search**: Search across all connected servers with built-in RAG capabilities
+- **AI Document Exchange (RAG v2)**: MCP servers can create and manage documents in your library with full attribution
 - **Notifications from Any Model**: Receive real-time notifications with optional email delivery
 - **Multi-Workspace Layer**: Switch between different sets of MCP configurations with one click
 - **API-Driven Proxy**: Fetches capabilities from plugged.in App APIs rather than direct discovery
 - **Full MCP Support**: Handles tools, resources, resource templates, and prompts
 - **Custom Instructions**: Supports server-specific instructions formatted as MCP prompts
 
-### 🎯 New in v1.4.0 (Registry v2 Support)
+### 🎯 New in v1.5.0 (RAG v2 - AI Document Exchange)
+
+- **AI Document Creation**: MCP servers can now create documents directly in your library
+  - Full model attribution tracking (which AI created/updated the document)
+  - Version history with change tracking
+  - Content deduplication via SHA-256 hashing
+  - Support for multiple formats: MD, TXT, JSON, HTML, PDF, and more
+- **Advanced Document Search**: Enhanced RAG queries with AI filtering
+  - Filter by AI model, provider, date range, tags, and source type
+  - Semantic search with relevance scoring
+  - Automatic snippet generation with keyword highlighting
+  - Support for filtering: `ai_generated`, `upload`, or `api` sources
+- **Document Management via MCP**: 
+  - Set document visibility: private, workspace, or public
+  - Parent-child relationships for document versions
+  - Profile-based organization alongside project-based scoping
+  - Real-time progress tracking for document processing
+
+### 🎯 Features from v1.4.0 (Registry v2 Support)
 
 - **OAuth Token Management**: Seamless OAuth authentication handling for Streamable HTTP MCP servers
   - Automatic token retrieval from plugged.in App
@@ -75,8 +94,9 @@ The proxy provides two distinct categories of tools:
 ### 🔧 Static Built-in Tools (Always Available)
 These tools are built into the proxy and work without any server configuration:
 - **`pluggedin_discover_tools`** - Smart discovery with caching for instant results
-- **`pluggedin_rag_query`** - RAG search across your documents
+- **`pluggedin_rag_query`** - RAG v2 search across your documents with AI filtering capabilities
 - **`pluggedin_send_notification`** - Send notifications with optional email delivery
+- **`pluggedin_create_document`** - (Coming Soon) Create AI-generated documents in your library
 
 ### ⚡ Dynamic MCP Tools (From Connected Servers)
 These tools come from your configured MCP servers and can be turned on/off:
@@ -104,13 +124,53 @@ pluggedin_discover_tools({"server_uuid": "uuid-here"})
 ```
 ## 🔧 Static Built-in Tools (Always Available):
 1. **pluggedin_discover_tools** - Smart discovery with caching
-2. **pluggedin_rag_query** - RAG search across documents  
+2. **pluggedin_rag_query** - RAG v2 search across documents with AI filtering  
 3. **pluggedin_send_notification** - Send notifications
+4. **pluggedin_create_document** - (Coming Soon) Create AI-generated documents
 
 ## ⚡ Dynamic MCP Tools (8) - From Connected Servers:
 1. **query** - Run read-only SQL queries
 2. **generate_random_integer** - Generate secure random integers
 ...
+```
+
+### 📚 RAG v2 Usage Examples
+
+The enhanced RAG v2 system allows MCP servers to create and search documents with full AI attribution:
+
+```bash
+# Search for documents created by specific AI models
+pluggedin_rag_query({
+  "query": "system architecture",
+  "filters": {
+    "modelName": "Claude 3 Opus",
+    "source": "ai_generated",
+    "tags": ["technical"]
+  }
+})
+
+# Search across all document sources
+pluggedin_rag_query({
+  "query": "deployment guide",
+  "filters": {
+    "dateFrom": "2024-01-01",
+    "visibility": "workspace"
+  }
+})
+
+# Future: Create AI-generated documents (Coming Soon)
+pluggedin_create_document({
+  "title": "Analysis Report",
+  "content": "# Market Analysis\n\nDetailed findings...",
+  "format": "md",
+  "tags": ["analysis", "market"],
+  "metadata": {
+    "model": {
+      "name": "Claude 3 Opus",
+      "provider": "Anthropic"
+    }
+  }
+})
 ```
 
 ## 🚀 Quick Start
@@ -124,7 +184,7 @@ pluggedin_discover_tools({"server_uuid": "uuid-here"})
 
 ```bash
 # Install and run with npx (latest v1.0.0)
-npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY
+npx -y @pluggedin/pluggedin-mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY
 ```
 
 ### 🔄 Upgrading to v1.0.0
@@ -133,7 +193,7 @@ For existing installations, see our [Migration Guide](./MIGRATION_GUIDE_v1.0.0.m
 
 ```bash
 # Quick upgrade
-npx -y @pluggedin/mcp-proxy@1.0.0 --pluggedin-api-key YOUR_API_KEY
+npx -y @pluggedin/pluggedin-mcp-proxy@1.0.0 --pluggedin-api-key YOUR_API_KEY
 ```
 
 ### Configuration for MCP Clients
@@ -147,7 +207,7 @@ Add the following to your Claude Desktop configuration:
   "mcpServers": {
     "pluggedin": {
       "command": "npx",
-      "args": ["-y", "@pluggedin/mcp-proxy@latest"],
+      "args": ["-y", "@pluggedin/pluggedin-mcp-proxy@latest"],
       "env": {
         "PLUGGEDIN_API_KEY": "YOUR_API_KEY"
       }
@@ -165,7 +225,7 @@ Add the following to your Cline configuration:
   "mcpServers": {
     "pluggedin": {
       "command": "npx",
-      "args": ["-y", "@pluggedin/mcp-proxy@latest"],
+      "args": ["-y", "@pluggedin/pluggedin-mcp-proxy@latest"],
       "env": {
         "PLUGGEDIN_API_KEY": "YOUR_API_KEY"
       }
@@ -179,7 +239,7 @@ Add the following to your Cline configuration:
 For Cursor, you can use command-line arguments instead of environment variables:
 
 ```bash
-npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY
+npx -y @pluggedin/pluggedin-mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY
 ```
 
 ## ⚙️ Configuration Options
@@ -196,7 +256,7 @@ npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY
 Command line arguments take precedence over environment variables:
 
 ```bash
-npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY --pluggedin-api-base-url https://your-custom-url.com
+npx -y @pluggedin/pluggedin-mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY --pluggedin-api-base-url https://your-custom-url.com
 ```
 
 #### Transport Options
@@ -211,7 +271,7 @@ npx -y @pluggedin/mcp-proxy@latest --pluggedin-api-key YOUR_API_KEY --pluggedin-
 For a complete list of options:
 
 ```bash
-npx -y @pluggedin/mcp-proxy@latest --help
+npx -y @pluggedin/pluggedin-mcp-proxy@latest --help
 ```
 
 ## 🌐 Streamable HTTP Mode
@@ -222,16 +282,16 @@ The proxy can run as an HTTP server instead of STDIO, enabling web-based access 
 
 ```bash
 # Run as HTTP server on default port (12006)
-npx -y @pluggedin/mcp-proxy@latest --transport streamable-http --pluggedin-api-key YOUR_API_KEY
+npx -y @pluggedin/pluggedin-mcp-proxy@latest --transport streamable-http --pluggedin-api-key YOUR_API_KEY
 
 # Custom port
-npx -y @pluggedin/mcp-proxy@latest --transport streamable-http --port 8080 --pluggedin-api-key YOUR_API_KEY
+npx -y @pluggedin/pluggedin-mcp-proxy@latest --transport streamable-http --port 8080 --pluggedin-api-key YOUR_API_KEY
 
 # With authentication required
-npx -y @pluggedin/mcp-proxy@latest --transport streamable-http --require-api-auth --pluggedin-api-key YOUR_API_KEY
+npx -y @pluggedin/pluggedin-mcp-proxy@latest --transport streamable-http --require-api-auth --pluggedin-api-key YOUR_API_KEY
 
 # Stateless mode (new session per request)
-npx -y @pluggedin/mcp-proxy@latest --transport streamable-http --stateless --pluggedin-api-key YOUR_API_KEY
+npx -y @pluggedin/pluggedin-mcp-proxy@latest --transport streamable-http --stateless --pluggedin-api-key YOUR_API_KEY
 ```
 
 ### HTTP Endpoints
@@ -455,10 +515,12 @@ The plugged.in MCP Proxy Server is designed to work seamlessly with the [plugged
 
 - A web-based interface for managing MCP server configurations
 - Centralized capability discovery (Tools, Resources, Templates, Prompts)
+- **RAG v2 Document Library**: Upload documents and enable AI-generated content with full attribution
 - Custom instructions management
 - Multi-workspace support for different configuration sets
-- An interactive playground for testing MCP tools
+- An interactive playground for testing MCP tools with any AI model
 - User authentication and API key management
+- **AI Document Exchange**: Create, search, and manage documents with model attribution tracking
 
 ## 📚 Related Resources
 
@@ -472,6 +534,21 @@ The plugged.in MCP Proxy Server is designed to work seamlessly with the [plugged
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📝 Recent Updates
+
+### Version 1.5.0 (January 2025) - RAG v2
+
+#### 🤖 AI Document Exchange
+- **AI-Generated Documents**: MCP servers can now create documents in your library with full AI attribution
+- **Model Attribution Tracking**: Complete history of which AI models created or updated each document
+- **Advanced Document Search**: Filter by AI model, provider, date, tags, and source type
+- **Document Versioning**: Track changes and maintain version history for AI-generated content
+- **Multi-Source Support**: Documents from uploads, AI generation, or API integrations
+
+#### 🔍 Enhanced RAG Capabilities
+- **Semantic Search**: Improved relevance scoring with PostgreSQL full-text search
+- **Smart Filtering**: Filter results by visibility, model attribution, and document source
+- **Snippet Generation**: Automatic snippet extraction with keyword highlighting
+- **Performance Optimization**: Faster queries with optimized indexing
 
 ### Version 1.2.0 (January 2025)
 
