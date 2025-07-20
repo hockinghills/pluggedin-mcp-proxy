@@ -5,7 +5,7 @@ import {
   RagQueryInputSchema,
   SendNotificationInputSchema,
   ListNotificationsInputSchema,
-  MarkNotificationReadInputSchema,
+  MarkNotificationDoneInputSchema,
   DeleteNotificationInputSchema,
   CreateDocumentInputSchema,
   ListDocumentsInputSchema,
@@ -108,16 +108,16 @@ export const listNotificationsStaticTool: Tool = {
   }
 };
 
-// Define the static tool for marking notifications as read
-export const markNotificationReadStaticTool: Tool = {
-  name: "pluggedin_mark_notification_read",
-  description: "Mark a notification as read (requires API key)",
+// Define the static tool for marking notifications as done
+export const markNotificationDoneStaticTool: Tool = {
+  name: "pluggedin_mark_notification_done",
+  description: "Mark a notification as done (requires API key)",
   inputSchema: {
     type: "object",
     properties: {
       notificationId: {
         type: "string",
-        description: "The ID of the notification to mark as read"
+        description: "The ID of the notification to mark as done"
       }
     },
     required: ["notificationId"]
@@ -437,7 +437,7 @@ export const staticTools: Tool[] = [
   ragQueryStaticTool,
   sendNotificationStaticTool,
   listNotificationsStaticTool,
-  markNotificationReadStaticTool,
+  markNotificationDoneStaticTool,
   deleteNotificationStaticTool,
   createDocumentStaticTool,
   listDocumentsStaticTool,
