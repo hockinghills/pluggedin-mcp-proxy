@@ -31,7 +31,7 @@ import {
   ragQueryStaticTool,
   sendNotificationStaticTool,
   listNotificationsStaticTool,
-  markNotificationReadStaticTool,
+  markNotificationDoneStaticTool,
   deleteNotificationStaticTool,
   createDocumentStaticTool,
   listDocumentsStaticTool,
@@ -279,7 +279,7 @@ Set environment variables in your terminal before launching the editor.
         dataContent += '2. **pluggedin_rag_query** - Performs a RAG query against documents\n';
         dataContent += '3. **pluggedin_send_notification** - Send custom notifications\n';
         dataContent += '4. **pluggedin_list_notifications** - List notifications with filters\n';
-        dataContent += '5. **pluggedin_mark_notification_read** - Mark a notification as read\n';
+        dataContent += '5. **pluggedin_mark_notification_done** - Mark a notification as done\n';
         dataContent += '6. **pluggedin_delete_notification** - Delete a notification\n';
         dataContent += '7. **pluggedin_create_document** - Create and save AI-generated documents to the user\'s library\n';
         dataContent += '8. **pluggedin_list_documents** - List documents with filtering options\n';
@@ -556,8 +556,8 @@ Set environment variables in your terminal before launching the editor.
     }
   }
 
-  async handleMarkNotificationRead(args: any): Promise<ToolExecutionResult> {
-    debugError(`[CallTool Handler] Executing static tool: ${markNotificationReadStaticTool.name}`);
+  async handleMarkNotificationDone(args: any): Promise<ToolExecutionResult> {
+    debugError(`[CallTool Handler] Executing static tool: ${markNotificationDoneStaticTool.name}`);
     const validatedArgs = MarkNotificationReadInputSchema.parse(args ?? {});
 
     const apiKey = getPluggedinMCPApiKey();
@@ -566,13 +566,13 @@ Set environment variables in your terminal before launching the editor.
       return {
         content: [{
           type: "text",
-          text: getApiKeySetupMessage("pluggedin_mark_notification_read")
+          text: getApiKeySetupMessage("pluggedin_mark_notification_done")
         }],
         isError: false
       };
     }
 
-    const notificationApiUrl = `${baseUrl}/api/notifications/${validatedArgs.notificationId}/read`;
+    const notificationApiUrl = `${baseUrl}/api/notifications/${validatedArgs.notificationId}/completed`;
 
     const timer = createExecutionTimer();
     try {
@@ -586,34 +586,34 @@ Set environment variables in your terminal before launching the editor.
         }
       );
 
-      // Log successful mark as read
+      // Log successful toggle completed
       logMcpActivity({
         action: 'tool_call',
         serverName: 'Notification System',
         serverUuid: 'pluggedin_notifications',
-        itemName: markNotificationReadStaticTool.name,
+        itemName: markNotificationDoneStaticTool.name,
         success: true,
         executionTime: timer.stop(),
       }).catch(() => {}); // Ignore notification errors
 
       return {
-        content: [{ type: "text", text: "Notification marked as read successfully!" }],
+        content: [{ type: "text", text: "Notification marked as done successfully!" }],
         isError: false,
       };
 
     } catch (apiError: any) {
-      // Log failed mark as read
+      // Log failed toggle completed
       logMcpActivity({
         action: 'tool_call',
         serverName: 'Notification System',
         serverUuid: 'pluggedin_notifications',
-        itemName: markNotificationReadStaticTool.name,
+        itemName: markNotificationDoneStaticTool.name,
         success: false,
         errorMessage: apiError instanceof Error ? apiError.message : String(apiError),
         executionTime: timer.stop(),
       }).catch(() => {}); // Ignore notification errors
       
-      let errorMsg = "Failed to mark notification as read";
+      let errorMsg = "Failed to mark notification as done";
       if (axios.isAxiosError(apiError)) {
         if (apiError.response?.status === 404) {
           errorMsg = "Notification not found";
@@ -1138,8 +1138,8 @@ Set environment variables in your terminal before launching the editor.
         return this.handleSendNotification(args);
       case listNotificationsStaticTool.name:
         return this.handleListNotifications(args);
-      case markNotificationReadStaticTool.name:
-        return this.handleMarkNotificationRead(args);
+      case markNotificationDoneStaticTool.name:
+        return this.handleMarkNotificationDone(args);
       case deleteNotificationStaticTool.name:
         return this.handleDeleteNotification(args);
       case createDocumentStaticTool.name:

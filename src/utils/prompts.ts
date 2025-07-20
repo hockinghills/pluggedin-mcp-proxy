@@ -76,7 +76,7 @@ These tools are built into Plugged.in and always available:
 ### Notification System
 3. **pluggedin_send_notification** - Send custom notifications
 4. **pluggedin_list_notifications** - List your notifications
-5. **pluggedin_mark_notification_read** - Mark notifications as read
+5. **pluggedin_mark_notification_done** - Mark notifications as done
 6. **pluggedin_delete_notification** - Delete notifications
 
 ### Document Management
@@ -327,8 +327,8 @@ Plugged.in transforms how you work with AI by providing a unified platform for m
   - \`severity\` (optional): Filter by severity level
 - **Why use it**: Never miss important updates from your AI workflows
 
-#### 11. **pluggedin_mark_notification_read**
-- **What it does**: Mark notifications as read
+#### 11. **pluggedin_mark_notification_done**
+- **What it does**: Mark notifications as done
 - **Parameters**:
   - \`notificationId\` (required): Notification ID
 - **Why use it**: Keep your notification center organized
