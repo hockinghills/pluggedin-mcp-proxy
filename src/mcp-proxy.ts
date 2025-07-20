@@ -175,8 +175,8 @@ const markNotificationDoneStaticTool: Tool = {
   }
 };
 
-// Input schema for mark notification read validation (used for done functionality)
-const MarkNotificationReadInputSchema = z.object({
+// Input schema for mark notification done validation
+const MarkNotificationDoneInputSchema = z.object({
   notificationId: z.string().min(1, "Notification ID cannot be empty"),
 });
 
@@ -962,7 +962,7 @@ export const createServer = async () => {
 
         // Handle static mark notification as read tool
         if (requestedToolName === markNotificationDoneStaticTool.name) {
-            const validatedArgs = MarkNotificationReadInputSchema.parse(args ?? {}); // Validate args
+            const validatedArgs = MarkNotificationDoneInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
             const baseUrl = getPluggedinMCPApiBaseUrl();

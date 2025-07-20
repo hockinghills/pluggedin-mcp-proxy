@@ -14,7 +14,7 @@ import {
   RagQueryInputSchema,
   SendNotificationInputSchema,
   ListNotificationsInputSchema,
-  MarkNotificationReadInputSchema,
+  MarkNotificationDoneInputSchema,
   DeleteNotificationInputSchema,
   CreateDocumentInputSchema,
   ListDocumentsInputSchema,
@@ -558,7 +558,7 @@ Set environment variables in your terminal before launching the editor.
 
   async handleMarkNotificationDone(args: any): Promise<ToolExecutionResult> {
     debugError(`[CallTool Handler] Executing static tool: ${markNotificationDoneStaticTool.name}`);
-    const validatedArgs = MarkNotificationReadInputSchema.parse(args ?? {});
+    const validatedArgs = MarkNotificationDoneInputSchema.parse(args ?? {});
 
     const apiKey = getPluggedinMCPApiKey();
     const baseUrl = getPluggedinMCPApiBaseUrl();

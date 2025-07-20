@@ -5,7 +5,7 @@ import {
   RagQueryInputSchema,
   SendNotificationInputSchema,
   ListNotificationsInputSchema,
-  MarkNotificationReadInputSchema,
+  MarkNotificationDoneInputSchema,
   DeleteNotificationInputSchema,
   CreateDocumentInputSchema,
   ListDocumentsInputSchema,
