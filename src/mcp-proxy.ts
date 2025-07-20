@@ -159,10 +159,10 @@ const ListNotificationsInputSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
 });
 
-// Define the static tool for marking notification as read
-const markNotificationReadStaticTool: Tool = {
-  name: "pluggedin_mark_notification_read",
-  description: "Mark a notification as read in the Plugged.in system",
+// Define the static tool for marking notification as done
+const markNotificationDoneStaticTool: Tool = {
+  name: "pluggedin_mark_notification_done",
+  description: "Mark a notification as done in the Plugged.in system",
   inputSchema: {
     type: "object",
     properties: {
@@ -175,8 +175,8 @@ const markNotificationReadStaticTool: Tool = {
   }
 };
 
-// Input schema for mark notification read validation
-const MarkNotificationReadInputSchema = z.object({
+// Input schema for mark notification done validation
+const MarkNotificationDoneInputSchema = z.object({
   notificationId: z.string().min(1, "Notification ID cannot be empty"),
 });
 
@@ -243,7 +243,7 @@ export const createServer = async () => {
            ragQueryStaticTool, 
            sendNotificationStaticTool,
            listNotificationsStaticTool,
-           markNotificationReadStaticTool,
+           markNotificationDoneStaticTool,
            deleteNotificationStaticTool
          ], 
          nextCursor: undefined 
@@ -305,7 +305,7 @@ export const createServer = async () => {
          updateDocumentStaticTool,
          sendNotificationStaticTool,
          listNotificationsStaticTool,
-         markNotificationReadStaticTool,
+         markNotificationDoneStaticTool,
          deleteNotificationStaticTool,
          ...toolsForClient
        ];
@@ -961,8 +961,8 @@ export const createServer = async () => {
         }
 
         // Handle static mark notification as read tool
-        if (requestedToolName === markNotificationReadStaticTool.name) {
-            const validatedArgs = MarkNotificationReadInputSchema.parse(args ?? {}); // Validate args
+        if (requestedToolName === markNotificationDoneStaticTool.name) {
+            const validatedArgs = MarkNotificationDoneInputSchema.parse(args ?? {}); // Validate args
 
             const apiKey = getPluggedinMCPApiKey();
             const baseUrl = getPluggedinMCPApiBaseUrl();
@@ -970,7 +970,7 @@ export const createServer = async () => {
                 throw new Error("Pluggedin API Key or Base URL is not configured for marking notifications.");
             }
 
-            const notificationApiUrl = `${baseUrl}/api/notifications/${validatedArgs.notificationId}/read`;
+            const notificationApiUrl = `${baseUrl}/api/notifications/${validatedArgs.notificationId}/completed`;
             const timer = createExecutionTimer();
 
             try {
@@ -982,9 +982,9 @@ export const createServer = async () => {
                     timeout: 15000,
                 });
 
-                const responseText = notificationResponse.data?.message || "Notification marked as read";
+                const responseText = notificationResponse.data?.message || "Notification marked as done";
                 
-                // Log successful mark as read
+                // Log successful mark as done
                 logMcpActivity({
                     action: 'tool_call',
                     serverName: 'Notification System',
@@ -1000,7 +1000,7 @@ export const createServer = async () => {
                 } as ToolExecutionResult;
 
             } catch (apiError: any) {
-                 // Log failed mark as read
+                 // Log failed mark as done
                  logMcpActivity({
                      action: 'tool_call',
                      serverName: 'Notification System',
@@ -1246,11 +1246,11 @@ The Plugged.in MCP Proxy is a powerful gateway that provides access to multiple 
   - \`limit\` (optional): Limit the number of notifications returned (1-100)
 - **Usage**: Retrieve and check your notifications with optional filters
 
-### 5. **pluggedin_mark_notification_read**
-- **Purpose**: Mark a notification as read
+### 5. **pluggedin_mark_notification_done**
+- **Purpose**: Mark a notification as done
 - **Parameters**:
-  - \`notificationId\` (required): The ID of the notification to mark as read
-- **Usage**: Update notification status to read
+  - \`notificationId\` (required): The ID of the notification to mark as done
+- **Usage**: Update notification status to done
 
 ### 6. **pluggedin_delete_notification**
 - **Purpose**: Delete a notification

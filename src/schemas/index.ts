@@ -30,8 +30,8 @@ export const ListNotificationsInputSchema = z.object({
   severity: z.enum(["INFO", "SUCCESS", "WARNING", "ALERT"]).optional(),
 });
 
-// Input schema for mark notification read validation
-export const MarkNotificationReadInputSchema = z.object({
+// Input schema for mark notification done validation
+export const MarkNotificationDoneInputSchema = z.object({
   notificationId: z.string().min(1, "Notification ID cannot be empty"),
 });
 
