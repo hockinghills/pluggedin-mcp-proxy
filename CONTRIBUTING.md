@@ -1,6 +1,6 @@
-# Contributing to Plugged.in MCP Proxy
+# Contributing to Plugged.in MCP Proxy - The Neural Pathways of AI Data Exchange
 
-Thank you for your interest in contributing to the Plugged.in MCP Proxy! This document provides guidelines and information for contributing to the MCP proxy server component of the Plugged.in ecosystem.
+Welcome to the core of plugged.in's infrastructure! The MCP Proxy is where the magic happens - it's the intelligent router that ensures every AI interaction flows seamlessly while respecting user sovereignty. Your contributions here directly impact how millions will experience AI in the future.
 
 ## Table of Contents
 - [Project Overview](#project-overview)
@@ -13,17 +13,25 @@ Thank you for your interest in contributing to the Plugged.in MCP Proxy! This do
 - [MCP-Specific Guidelines](#mcp-specific-guidelines)
 - [Performance Considerations](#performance-considerations)
 
+## Why This Matters
+
+The MCP Proxy is the guardian at the crossroads - it ensures that:
+- **Data flows securely** between AI models and your tools
+- **Performance stays blazing fast** even at massive scale
+- **Privacy is preserved** through intelligent routing
+- **Control remains with users** through transparent operations
+
 ## Project Overview
 
-The Plugged.in MCP Proxy (`pluggedin-mcp`) is a TypeScript-based Model Context Protocol proxy server that provides a unified interface for MCP clients. It works in conjunction with the main Plugged.in application (`pluggedin-app`) to enable seamless MCP server management and social features.
+The Plugged.in MCP Proxy (`pluggedin-mcp`) is a TypeScript-based Model Context Protocol proxy server that provides a unified interface for MCP clients. It's the critical infrastructure that transforms chaos into order, enabling:
 
 ### Key Features
-- Unified MCP server interface
-- Progressive server initialization
-- Built-in notification system
-- Security sandboxing for STDIO servers
-- Lightweight Docker deployment
-- RAG integration support
+- **Unified MCP server interface**: One connection, infinite possibilities
+- **Progressive server initialization**: Resilient connections that never block
+- **Built-in notification system**: Real-time awareness of AI activities
+- **Security sandboxing**: STDIO servers run in isolated environments
+- **Lightweight Docker deployment**: Optimized for edge and cloud
+- **RAG integration support**: Seamless document intelligence
 
 ### Tech Stack
 - **Runtime**: Node.js 20+
@@ -99,6 +107,14 @@ npm run inspector:manual # Manual mode for testing
 npm run inspector:auth  # Authenticated mode testing
 ```
 
+## Vision Alignment
+
+Every line of code in the MCP Proxy should advance our mission. Before contributing, understand our journey:
+
+- Read the main [ROADMAP.md](https://github.com/VeriTeknik/pluggedin-app/blob/main/ROADMAP.md) to see where we're heading
+- Understand how the proxy fits into each phase of our vision
+- Consider how your contribution empowers users
+
 ## Development Guidelines
 
 ### Project Structure
@@ -123,29 +139,29 @@ pluggedin-mcp/
 
 ### Core Principles
 
-1. **Keep It Lightweight**: The MCP proxy must remain lightweight for efficient Docker deployments
-   - Minimize dependencies
-   - Avoid redundant libraries
-   - Regularly audit package.json
-   - Consider bundle size impact
+1. **Keep It Lightweight**: Every byte matters when you're the backbone
+   - Minimize dependencies ruthlessly
+   - Question every library addition
+   - Optimize for container environments
+   - Target sub-50MB Docker images
 
-2. **Performance First**: Optimize for speed and memory efficiency
-   - Use streaming where possible
-   - Implement proper connection pooling
-   - Monitor memory usage
-   - Profile performance regularly
+2. **Performance First**: Milliseconds multiply at scale
+   - Stream everything streamable
+   - Pool connections intelligently
+   - Profile before and after changes
+   - Aim for sub-100ms response times
 
-3. **Security by Default**: All operations must be secure
-   - Validate all inputs
-   - Sandbox STDIO operations (Linux)
-   - Implement proper authentication
-   - Follow security best practices
+3. **Security by Default**: Trust nothing, verify everything
+   - Validate inputs like your life depends on it
+   - Sandbox all external processes
+   - Authenticate every request
+   - Assume breach, limit blast radius
 
-4. **Error Resilience**: Handle errors gracefully
-   - Progressive server initialization
-   - Automatic reconnection logic
-   - Detailed error logging
-   - Non-blocking notification system
+4. **Error Resilience**: Fail gracefully, recover automatically
+   - Never let one server block others
+   - Implement circuit breakers
+   - Log errors with context
+   - Keep users informed, not alarmed
 
 ### Code Patterns
 
@@ -341,30 +357,50 @@ Brief description of changes
 
 ### Working with MCP Protocol
 
-1. **Protocol Compliance**: Follow MCP specification strictly
-2. **Version Compatibility**: Support multiple MCP versions
-3. **Tool Discovery**: Implement proper capability discovery
-4. **Resource Management**: Handle resources efficiently
+1. **Protocol Compliance**: The spec is sacred - follow it religiously
+2. **Version Compatibility**: Support the ecosystem, not just the latest
+3. **Tool Discovery**: Make capabilities discoverable and understandable
+4. **Resource Management**: Treat resources like they're precious (they are)
 
 ### Server Types
 
-Support all MCP server types:
-- **STDIO**: With proper sandboxing
-- **HTTP/SSE**: With connection management
-- **WebSocket**: With reconnection logic
+Each server type has unique challenges - master them all:
+
+- **STDIO**: The wild west - sandbox everything
+  ```typescript
+  // Always use Firejail on Linux
+  const sandbox = await createSecureSandbox(serverPath);
+  ```
+
+- **HTTP/SSE**: The marathoner - manage long connections
+  ```typescript
+  // Implement proper keep-alive and timeout handling
+  const connection = await createResilientConnection(config);
+  ```
+
+- **WebSocket**: The sprinter - handle reconnections gracefully
+  ```typescript
+  // Exponential backoff with jitter
+  const ws = await createAutoReconnectingWebSocket(url);
+  ```
 
 ### Notification System
 
-The notification system must be non-blocking:
+Notifications inform without interrupting:
 
 ```typescript
-// Good: Non-blocking notification
+// Excellence: Non-blocking, contextual notifications
 async function notifyActivity(activity: Activity): Promise<void> {
-  // Fire and forget
-  sendNotification(activity).catch(error => {
-    logger.error('Notification failed:', error);
-    // Don't throw - continue operation
-  });
+  // Enrich with context
+  const enriched = await enrichActivity(activity);
+  
+  // Fire and forget with telemetry
+  sendNotification(enriched)
+    .catch(error => {
+      telemetry.record('notification.failed', { error });
+      logger.error('Notification failed:', error);
+      // Never throw - the show must go on
+    });
 }
 ```
 
@@ -401,20 +437,63 @@ if (duration > 1000) {
 }
 ```
 
+## Contributing to Our Vision
+
+### How You Can Shape the Future
+
+The MCP Proxy is central to our roadmap. Here's how you can contribute to each phase:
+
+**Phase 1 (Current)**: Help us build unshakeable foundations
+- Improve error recovery mechanisms
+- Optimize connection handling
+- Enhance security sandboxing
+- Create comprehensive tests
+
+**Phase 2**: Enable the business layer
+- Build usage tracking for billing
+- Implement rate limiting
+- Add multi-tenant isolation
+- Create admin APIs
+
+**Phase 3**: Power the AI assistant ecosystem
+- Design multi-agent protocols
+- Build capability negotiation
+- Implement context sharing
+- Create assistant SDKs
+
+**Phase 4**: Decentralize everything
+- Research P2P protocols
+- Implement edge computing
+- Build federation support
+- Create privacy-preserving routing
+
 ## Getting Help
 
 ### Resources
 
+- **Project Vision**: [ROADMAP.md](https://github.com/VeriTeknik/pluggedin-app/blob/main/ROADMAP.md)
 - **Main Documentation**: See CLAUDE.md in the root directory
 - **MCP Specification**: [modelcontextprotocol.io](https://modelcontextprotocol.io)
 - **Issues**: GitHub Issues for bug reports and features
-- **Discussions**: GitHub Discussions for questions
+- **Discord**: [Join our community](https://discord.gg/pluggedin)
 
 ### Communication Channels
 
 - **GitHub Issues**: Bug reports and feature requests
 - **Pull Requests**: Code contributions
-- **Security Issues**: Email security@plugged.in (do not use public issues)
+- **Discord**: Real-time discussions and support
+- **Security Issues**: security@plugged.in (never use public channels)
+
+## Join the Revolution
+
+Every contribution to the MCP Proxy is a step toward a future where:
+
+- **AI serves humanity**, not corporate interests
+- **Data sovereignty** is a fundamental right
+- **Performance and privacy** coexist beautifully
+- **Open source** drives innovation
+
+Your code here doesn't just route data - it routes the future of human-AI interaction.
 
 ## License
 
@@ -422,4 +501,6 @@ By contributing to Plugged.in MCP Proxy, you agree that your contributions will 
 
 ---
 
-Thank you for contributing to Plugged.in! Your efforts help make MCP more accessible to everyone.
+> *"In the flow of data between human and machine, we are the guardians of intent."*
+
+**Welcome to the MCP Proxy team. Let's build infrastructure that empowers billions.** 🚀
